@@ -66,4 +66,4 @@ The model is trained to identify the odd-one-out image by moving its gaze across
 
 ## License
 
-This project is part of a bachelor's thesis in Cgnitive modelling.
+This project is part of a bachelor's thesis in Cognitive modelling.
