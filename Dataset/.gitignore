@@ -1,0 +1,28 @@
+# vscode options
+.vscode/
+
+# notebook files
+.ipynb_checkpoints/
+
+lightning_logs
+lightning_logs/
+
+# Byte-compiled / optimized / DLL files
+__pycache__
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+
+plots/
+dbs/
+
+logs/
+
+*.pyc
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py

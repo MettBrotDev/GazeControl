@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+Data/labled/
+Data/task_shape/train
+Data/task_shape/test
+Data/task_shape/test_gen
+Data/task_shape/val

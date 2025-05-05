@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bachelor's Thesis - Cognitive Modeling for Gaze Control</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --secondary: #2c3e50;
+            --accent: #e74c3c;
+            --light: #ecf0f1;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: var(--dark);
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            padding: 2rem 0;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 2.5rem;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-top: 0.5rem;
+        }
+        
+        section {
+            padding: 3rem 0;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        
+        h2 {
+            color: var(--primary);
+            border-bottom: 2px solid var(--light);
+            padding-bottom: 0.5rem;
+            margin-top: 0;
+        }
+        
+        .network-diagram {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            margin: 2rem 0;
+            text-align: center;
+        }
+        
+        svg {
+            max-width: 100%;
+            height: auto;
+        }
+        
+        .timeline {
+            position: relative;
+            max-width: 1200px;
+            margin: 2rem auto;
+        }
+        
+        .timeline::after {
+            content: '';
+            position: absolute;
+            width: 6px;
+            background-color: var(--light);
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            margin-left: -3px;
+        }
+        
+        .timeline-item {
+            padding: 10px 40px;
+            position: relative;
+            background-color: inherit;
+            width: 50%;
+        }
+        
+        .timeline-item::after {
+            content: '';
+            position: absolute;
+            width: 25px;
+            height: 25px;
+            right: -13px;
+            background-color: white;
+            border: 4px solid var(--primary);
+            top: 15px;
+            border-radius: 50%;
+            z-index: 1;
+        }
+        
+        .left {
+            left: 0;
+        }
+        
+        .right {
+            left: 50%;
+        }
+        
+        .left::before {
+            content: " ";
+            height: 0;
+            position: absolute;
+            top: 22px;
+            width: 0;
+            z-index: 1;
+            right: 30px;
+            border: medium solid var(--light);
+            border-width: 10px 0 10px 10px;
+            border-color: transparent transparent transparent white;
+        }
+        
+        .right::before {
+            content: " ";
+            height: 0;
+            position: absolute;
+            top: 22px;
+            width: 0;
+            z-index: 1;
+            left: 30px;
+            border: medium solid var(--light);
+            border-width: 10px 10px 10px 0;
+            border-color: transparent white transparent transparent;
+        }
+        
+        .right::after {
+            left: -12px;
+        }
+        
+        .timeline-content {
+            padding: 20px 30px;
+            background-color: white;
+            position: relative;
+            border-radius: 6px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+        }
+        
+        .timeline-content h3 {
+            color: var(--primary);
+            margin-top: 0;
+        }
+        
+        .footer {
+            background-color: var(--secondary);
+            color: white;
+            text-align: center;
+            padding: 2rem 0;
+            margin-top: 2rem;
+        }
+        
+        .btn {
+            display: inline-block;
+            background-color: var(--primary);
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 4px;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+        
+        .btn:hover {
+            background-color: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .dataset-preview {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+        
+        .dataset-item {
+            border: 2px solid var(--light);
+            border-radius: 8px;
+            overflow: hidden;
+            width: 100px;
+            height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: white;
+        }
+        
+        .dataset-item img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        @media screen and (max-width: 768px) {
+            .timeline::after {
+                left: 31px;
+            }
+            
+            .timeline-item {
+                width: 100%;
+                padding-left: 70px;
+                padding-right: 25px;
+            }
+            
+            .timeline-item::before {
+                left: 60px;
+                border-width: 10px 10px 10px 0;
+                border-color: transparent white transparent transparent;
+            }
+            
+            .left::after, .right::after {
+                left: 18px;
+            }
+            
+            .right {
+                left: 0%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="container">
+            <h1>Cognitive Modeling for Gaze Control in Visual Reasoning</h1>
+            <p class="subtitle">Bachelor's Thesis in Computational Neuroscience</p>
+        </div>
+    </header>
+
+    <section>
+        <div class="container">
+            <div class="card">
+                <h2>Project Overview</h2>
+                <p>This bachelor's thesis explores cognitive modeling for gaze control in visual reasoning tasks. Using the CVR dataset from the Serre Lab, I will develop a reinforcement learning model that mimics human gaze patterns when solving visual odd-one-out problems. The model will use a limited visual field that moves across the image, similar to human foveal vision, before making decisions.</p>
+                
+            </div>
+            
+            <div class="card">
+                <h2>Network Architecture</h2>
+                <p>The model combines a feature extractor with limited field-of-view, a recurrent memory module (GRU), and a reinforcement learning agent that controls gaze movements and decision-making.</p>
+                
+                <div class="network-diagram">
+                    <svg viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Background -->
+                        <rect x="0" y="0" width="800" height="400" fill="#f8f9fa" rx="10" ry="10"/>
+                        
+                        <!-- Input Image -->
+                        <rect x="50" y="150" width="100" height="100" fill="#e9ecef" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="100" y="130" text-anchor="middle" font-size="14" fill="#495057">Input Image</text>
+                        
+                        <!-- Limited FOV -->
+                        <rect x="60" y="160" width="30" height="30" fill="#3498db" stroke="#343a40" stroke-width="2"/>
+                        <text x="100" y="210" text-anchor="middle" font-size="12" fill="#495057">Limited FOV</text>
+                        
+                        <!-- Arrow 1 -->
+                        <line x1="150" y1="200" x2="200" y2="200" stroke="#343a40" stroke-width="2"/>
+                        <polygon points="200,200 190,195 190,205" fill="#343a40"/>
+                        
+                        <!-- Feature Extractor -->
+                        <rect x="200" y="160" width="120" height="80" fill="#3498db" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="260" y="205" text-anchor="middle" font-size="14" fill="white">Feature Extractor</text>
+                        
+                        <!-- Arrow 2 -->
+                        <line x1="320" y1="200" x2="370" y2="200" stroke="#343a40" stroke-width="2"/>
+                        <polygon points="370,200 360,195 360,205" fill="#343a40"/>
+                        
+                        <!-- GRU Memory -->
+                        <rect x="370" y="160" width="120" height="80" fill="#2ecc71" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="430" y="190" text-anchor="middle" font-size="14" fill="white">GRU Memory</text>
+                        <text x="430" y="210" text-anchor="middle" font-size="14" fill="white">Module</text>
+                        
+                        <!-- Arrow to RL Agent -->
+                        <line x1="490" y1="180" x2="540" y2="180" stroke="#343a40" stroke-width="2"/>
+                        <polygon points="540,180 530,175 530,185" fill="#343a40"/>
+                        
+                        <!-- Arrow to Decoder -->
+                        <line x1="490" y1="220" x2="540" y2="280" stroke="#343a40" stroke-width="2"/>
+                        <polygon points="540,280 530,275 535,265" fill="#343a40"/>
+                        
+                        <!-- RL Agent -->
+                        <rect x="540" y="140" width="120" height="80" fill="#e74c3c" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="600" y="185" text-anchor="middle" font-size="14" fill="white">RL Agent</text>
+                        
+                        <!-- Decoder Module -->
+                        <rect x="540" y="260" width="120" height="80" fill="#3498db" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="600" y="290" text-anchor="middle" font-size="14" fill="white">Decoder</text>
+                        <text x="600" y="310" text-anchor="middle" font-size="14" fill="white">Module</text>
+                        
+                        <!-- Action Outputs -->
+                        <line x1="660" y1="160" x2="710" y2="140" stroke="#343a40" stroke-width="2"/>
+                        <polygon points="710,140 700,143 705,150" fill="#343a40"/>
+                        
+                        <line x1="660" y1="200" x2="710" y2="220" stroke="#343a40" stroke-width="2"/>
+                        <polygon points="710,220 700,217 705,210" fill="#343a40"/>
+                        
+                        <!-- Decoded Output -->
+                        <line x1="660" y1="300" x2="710" y2="300" stroke="#343a40" stroke-width="2"/>
+                        <polygon points="710,300 700,295 700,305" fill="#343a40"/>
+                        
+                        <!-- Move Action -->
+                        <rect x="710" y="110" width="80" height="60" fill="#f39c12" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="750" y="145" text-anchor="middle" font-size="14" fill="white">Move FOV</text>
+                        
+                        <!-- Decide Action -->
+                        <rect x="710" y="190" width="80" height="60" fill="#9b59b6" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="750" y="225" text-anchor="middle" font-size="14" fill="white">Decide</text>
+                        
+                        <!-- Reconstructed Image -->
+                        <rect x="710" y="270" width="80" height="60" fill="#3498db" stroke="#343a40" stroke-width="2" rx="5" ry="5"/>
+                        <text x="750" y="305" text-anchor="middle" font-size="14" fill="white">Reconstructed</text>
+                        
+                        <!-- Feedback loop -->
+                        <path d="M 750 110 C 750 80 430 80 430 160" fill="none" stroke="#343a40" stroke-width="2" stroke-dasharray="5,5"/>
+                        <polygon points="430,160 425,150 435,150" fill="#343a40"/>
+                        
+                        <!-- Movement feedback to image -->
+                        <path d="M 710 140 C 650 100 180 100 75 160" fill="none" stroke="#343a40" stroke-width="2" stroke-dasharray="5,5"/>
+                        <polygon points="75,160 70,150 80,150" fill="#343a40"/>
+                        
+                        <!-- Legend -->
+                        <rect x="50" y="320" width="20" height="20" fill="#3498db" stroke="#343a40" stroke-width="1"/>
+                        <text x="80" y="335" font-size="12" fill="#343a40">Visual Processing</text>
+                        
+                        <rect x="200" y="320" width="20" height="20" fill="#2ecc71" stroke="#343a40" stroke-width="1"/>
+                        <text x="230" y="335" font-size="12" fill="#343a40">Memory</text>
+                        
+                        <rect x="350" y="320" width="20" height="20" fill="#e74c3c" stroke="#343a40" stroke-width="1"/>
+                        <text x="380" y="335" font-size="12" fill="#343a40">Decision Making</text>
+                        
+                        <rect x="500" y="320" width="20" height="20" fill="#f39c12" stroke="#343a40" stroke-width="1"/>
+                        <text x="530" y="335" font-size="12" fill="#343a40">Gaze Control</text>
+                        
+                        <rect x="650" y="320" width="20" height="20" fill="#9b59b6" stroke="#343a40" stroke-width="1"/>
+                        <text x="680" y="335" font-size="12" fill="#343a40">Final Classification</text>
+                    </svg>
+                </div>
+                
+                <p>The network consists of five main components:</p>
+                <ol>
+                    <li><strong>Limited Field of View:</strong> A windowed input that only sees a portion of the image at a time</li>
+                    <li><strong>Feature Extractor:</strong> A convolutional network that processes the visible portion</li>
+                    <li><strong>GRU Memory Module:</strong> Stores and integrates information from multiple glimpses</li>
+                    <li><strong>Reinforcement Learning Agent:</strong> Decides whether to move the FOV or make a final decision</li>
+                    <li><strong>Decoder Module:</strong> Reconstructs the full image from memory to aid understanding and verification</li>
+                </ol>
+            </div>
+            
+            <div class="card">
+                <h2>Research Plan</h2>
+                
+                <div class="timeline">
+                    <div class="timeline-item left">
+                        <div class="timeline-content">
+                            <h3>Phase 1: Data Preparation</h3>
+                            <p>Set up the CVR dataset environment and preprocess images for model input. Analyze the dataset structure and how to use it.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-item right">
+                        <div class="timeline-content">
+                            <h3>Phase 2: Model Architecture</h3>
+                            <p>Develop the basic model architecture with feature extractor, GRU memory module, and reinforcement learning agent. Initially implement a simple FOV with quarter-image viewing capability.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-item left">
+                        <div class="timeline-content">
+                            <h3>Phase 3: Basic Movement Implementation</h3>
+                            <p>Implement fixed movement patterns (e.g., 4-direction movement between image quadrants). Train the RL agent to navigate through the image effectively.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-item right">
+                        <div class="timeline-content">
+                            <h3>Phase 4: Fine-Grained Movement</h3>
+                            <p>Extend the model to allow more fine-grained movement with smaller FOV, approaching human-like foveated vision patterns. Implement continuous movement across the image space.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-item left">
+                        <div class="timeline-content">
+                            <h3>Phase 5: Performance Analysis</h3>
+                            <p>Evaluate the models performance and behavior change with different FOV's or foveated vision. Maybe prevent it from seeing parts of the image and observe its behavior.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-item right">
+                        <div class="timeline-content">
+                            <h3>Phase 6: Documentation and Thesis Writing</h3>
+                            <p>Document findings, analyze results, and prepare the final thesis manuscript. Create visualizations of model behavior and performance comparisons.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Expected Outcomes</h2>
+                <p>This research aims to contribute to the understanding of visual attention mechanisms in artificial intelligence systems. The project will deliver:</p>
+                <ul>
+                    <li>A computational model that mimics human-like gaze control in visual reasoning tasks</li>
+                    <li>Analysis of how different field-of-view and maybe other constraints affect model performance</li>
+                    <li>(Maybe, probably not though)Comparison between artificial and human gaze patterns in odd-one-out tasks</li>
+                    <li>Insights into cognitive processes underlying visual attention and decision-making</li>
+                </ul>
+            </div>
+            
+            <div class="card">              
+                <h3>Implementation Approach</h3>
+                <ol>
+                    <li>Start with a CNN-based feature extractor (ResNet or similar architecture)</li>
+                    <li>Implement GRU for temporal integration of visual features</li>
+                    <li>Use policy gradient methods (A2C or PPO) for the RL component</li>
+                    <li>Gradually increase complexity of movement patterns and reduce FOV size</li>
+                </ol>
+            </div>
+        </div>
+    </section>
+
+    <div class="footer">
+        <div class="container">
+            <p>Bachelor's Thesis Project | Cognitive Modeling for Gaze Control</p>
+            <a href="#" class="btn">Download Project Proposal</a>
+        </div>
+    </div>
+
+</body>
+</html>
