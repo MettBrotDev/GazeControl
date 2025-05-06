@@ -37,7 +37,7 @@ pip install -r requirements.txt
 Generate the data first:
 
 ```bash
-python generate_dataset.py --task_index 0 --out_dir ./data
+python ./Dataset/generate_dataset.py --task_idx 0 --data_dir ./Data
 ```
 (You can change the task index for generating different tasks)
 
