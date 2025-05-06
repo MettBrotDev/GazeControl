@@ -36,8 +36,8 @@ class OddOneOutDataset(Dataset):
             transform: Optional transform to apply to images
         """
         self.data_dir = os.path.join(data_dir, split)
+        # Note: Dont resize here like you usually would because we will crop the image later
         self.transform = transform or transforms.Compose([
-            transforms.Resize((224, 224)),  # ResNet expects 224x224
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
@@ -88,7 +88,7 @@ class Trainer:
         self.optimizer = optim.Adam(self.model.parameters(), lr=config['lr'])
         
         # Data loaders
-        data_dir = "./Data/labled/"
+        data_dir = "./Data/labeled/"
         self.train_dataset = OddOneOutDataset(data_dir, 'train')
         self.val_dataset = OddOneOutDataset(data_dir, 'val')
         self.test_dataset = OddOneOutDataset(data_dir, 'test')
@@ -119,14 +119,17 @@ class Trainer:
         
         # Calculate crop boundaries for quarters
         crop_h, crop_w = h // 2, w // 2
-        top = y * crop_h
-        left = x * crop_w
+        top = int(y * crop_h)
+        left = int(x * crop_w)
         bottom = top + crop_h
         right = left + crop_w
         
-        # Crop and return the FOV
         fov = image[:, :, top:bottom, left:right]
-        return fov
+        
+        # resize the FOV to 224x224 for ResNet
+        fov_resized = F.interpolate(fov, size=(224, 224), mode='bilinear', align_corners=False)
+        
+        return fov_resized
     
     def position_from_action(self, current_position, action):
         """Convert action to new position or decision.

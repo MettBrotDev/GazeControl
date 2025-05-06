@@ -3,7 +3,7 @@ import random
 from PIL import Image
 from pathlib import Path
 
-def process_images(base_dir, output_base_dir="./Data/labled"):
+def process_images(base_dir, output_base_dir="./Data/labeled"):
     os.makedirs(output_base_dir, exist_ok=True)
     
     # all directories given by the dataset generation script
@@ -43,12 +43,23 @@ def process_image(image_path, output_dir):
     # The new position of the odd part (which the dataset always puts in the last position)
     new_pos = indices.index(3)
     
-    # Create a new image with the shuffled parts
-    new_img = Image.new(img.mode, (width, height))
-    for i, idx in enumerate(indices):
-        new_img.paste(parts[idx], (i * part_width, 0))
+    # Create a new image with 2x2 dimensions
+    new_width = part_width * 2
+    new_height = height * 2
+    new_img = Image.new(img.mode, (new_width, new_height))
     
-    # lable the new image
+    for i, idx in enumerate(indices):
+        # 0, 1
+        # 2, 3
+        row = i // 2  
+        col = i % 2   
+        
+        x_position = col * part_width
+        y_position = row * height
+        
+        new_img.paste(parts[idx], (x_position, y_position))
+    
+    # label the new image
     original_name = Path(image_path).stem
     new_filename = f"{original_name}_{new_pos}.png"
     
