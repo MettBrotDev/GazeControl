@@ -15,6 +15,7 @@ The model mimics human visual attention by using:
 - **Model.py**: Neural network architecture (CNN feature extractor, GRU memory, actor-critic RL components)
 - **train.py**: Training pipeline including dataset loading, episode generation, and RL optimization
 - **Data/**: Contains the CVR dataset with odd-one-out visual reasoning tasks
+- **Dataset/**: Contains the code for the CVR dataset
 
 ## Installation
 
@@ -32,6 +33,19 @@ pip install -r requirements.txt
 ```
 
 ## Usage
+
+Generate the data first:
+
+```bash
+python generate_dataset.py --task_index 0 --out_dir ./data
+```
+(You can change the task index for generating different tasks)
+
+Then shuffle and label them:
+
+```bash
+python ./Data/task_shape/MixNLable.py
+```
 
 To train the model:
 
