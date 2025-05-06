@@ -44,7 +44,7 @@ python ./Dataset/generate_dataset.py --task_idx 0 --data_dir ./Data
 Then shuffle and label them:
 
 ```bash
-python ./Data/task_shape/MixNLable.py
+python ./Data/task_shape/MixNLabel.py
 ```
 
 To train the model:
