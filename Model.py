@@ -44,45 +44,54 @@ class MemoryModule(nn.Module):
     
 '''Decoder module for the model
 Input: GRU output
-Output: reconstructed image
+Output: tensor with shape [batch_size, 3, 272, 272] containing normalized RGB values (0-1)
 ** Using a CNN decoder for now. Might look into other options later'''
 class DecoderModule(nn.Module):
-    def __init__(self, input_size, hidden_sizes, output_size):
+    def __init__(self, input_size, hidden_sizes, output_size=3):
         super(DecoderModule, self).__init__()
-        # Maybe add batch normalization and dropout later!!!
-        self.layers = nn.ModuleList()
         
-        # First layer takes the GRU hidden size as input
-        self.layers.append(nn.Linear(input_size, hidden_sizes[0] * 4))
-        self.layers.append(nn.ReLU())
+        # Starting from 1x1, we need to reach 272x272
+        # 1 -> 17 -> 34 -> 68 -> 136 -> 272
         
-        self.hidden_sizes = hidden_sizes
+        self.initial_projection = nn.Sequential(
+            nn.Linear(input_size, hidden_sizes[0] * 17 * 17),
+            nn.ReLU()
+        )
         
         # Transposed convolutions for upsampling
-        self.layers.append(nn.ConvTranspose2d(hidden_sizes[0], hidden_sizes[1], kernel_size=3, stride=2, padding=1))
-        self.layers.append(nn.ReLU())
-        
-        for i in range(1, len(hidden_sizes) - 1):
-            self.layers.append(nn.ConvTranspose2d(hidden_sizes[i], hidden_sizes[i+1], kernel_size=3, stride=2, padding=1))
-            self.layers.append(nn.ReLU())
+        self.upsampling = nn.Sequential(
+            # 17x17 -> 34x34
+            nn.ConvTranspose2d(hidden_sizes[0], hidden_sizes[0], kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(hidden_sizes[0]),
             
-        self.layers.append(nn.ConvTranspose2d(hidden_sizes[-1], output_size, kernel_size=3, stride=2, padding=1))
+            # 34x34 -> 68x68
+            nn.ConvTranspose2d(hidden_sizes[0], hidden_sizes[1], kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(hidden_sizes[1]),
+            
+            # 68x68 -> 136x136
+            nn.ConvTranspose2d(hidden_sizes[1], hidden_sizes[2], kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(hidden_sizes[2]),
+            
+            # 136x136 -> 272x272
+            nn.ConvTranspose2d(hidden_sizes[2], output_size, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid()  # Use sigmoid to constrain values between 0 and 1
+        )
     
     def forward(self, x):
-        # x has shape [batch_size, input_size, 1, 1]
-        x = x.view(x.size(0), -1)
+        # x has shape [batch_size, input_size]
+        batch_size = x.size(0)
         
-        # Apply first linear layer
-        x = self.layers[0](x)
-        x = self.layers[1](x)
+        # Project and reshape to initial spatial dimensions
+        x = self.initial_projection(x)
+        x = x.view(batch_size, -1, 17, 17)
         
-        # Reshape for convolutional layers
-        x = x.view(x.size(0), self.hidden_sizes[0], 2, 2) 
+        # Apply upsampling layers to create a tensor with normalized RGB values
+        # Output shape: [batch_size, 3, 272, 272] with values in range [0,1]
+        x = self.upsampling(x)
         
-        # Apply remaining layers
-        for layer in self.layers[2:]:
-            x = layer(x)
-            
         return x
         
 '''Reinforcement module for the model
@@ -160,7 +169,7 @@ class CognitiveModel(nn.Module):
         # Memory module (GRU)
         self.memory = MemoryModule(self.feature_size, gru_hidden_size)
         
-        # Decoder for image reconstruction
+        # Decoder for image reconstruction (now properly configured for 272x272)
         self.decoder = DecoderModule(gru_hidden_size, decoder_hidden_sizes, decoder_output_size)
         
         # Actor-Critic for action selection
@@ -168,6 +177,11 @@ class CognitiveModel(nn.Module):
         
         # Initial hidden state
         self.h0 = None
+
+        # Initial Heatmap (272x272)
+        # The heatmap should always be between 0 and 1 and gives information on what the model should already know.
+        # It should always be between 0 and 1 for each pixel value. We will later use this to calculate the decoder loss.
+        self.heatmap = torch.zeros((272, 272), dtype=torch.float32)
         
     def reset_memory(self):
         """Reset the memory/hidden state of the GRU"""
@@ -211,9 +225,8 @@ class CognitiveModel(nn.Module):
         action_probs, value = self.actor_critic(final_mem_output)  # Actor-critic takes 2D input
         
         if return_reconstruction:
-            # 4D input: batch, channels, height, width
-            decoder_input = final_mem_output.view(1, -1, 1, 1) 
-            reconstruction = self.decoder(decoder_input)
+            # Generate tensor of normalized RGB values (shape: [batch_size, 3, 272, 272])
+            reconstruction = self.decoder(final_mem_output)
             return action_probs, value, reconstruction
         else:
             return action_probs, value

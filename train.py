@@ -8,14 +8,16 @@ from PIL import Image
 from Model import CognitiveModel
 import random
 
+# Note: All images will be 272x272
+
 # Configuration params maybe moved to a separate config file later
 CONFIG = {
     'batch_size': 1,  # For sequential decision-making, batch_size=1 makes most sense
     'lr': 0.0003,  # Learning rate
     'gamma': 0.99,  # Discount factor for RL
     'gru_hidden_size': 512,  # Memory module hidden dimension
-    'decoder_hidden_sizes': [256, 128, 64],  # Progressively upsampling
-    'decoder_output_size': 3,  # RGB image
+    'decoder_hidden_sizes': [256, 128, 64],  # Hidden sizes for upsampling stages
+    'decoder_output_size': 3,  # RGB channels
     'ac_hidden_size': 256,  # Actor-critic hidden size
     'num_actions': 8,  # 4 directions + 4 decide actions (one for each quadrant)
     'epochs': 100,
@@ -25,6 +27,8 @@ CONFIG = {
     'correct_reward': 1.0,  # Reward for correct prediction
     'incorrect_reward': -0.5,  # Penalty for incorrect prediction
     'step_penalty': -0.05,  # Small penalty for each step to encourage efficiency
+    'heatmap_decay': 0.95,  # Decay factor for heatmap
+    'decoder_loss_weight': 0.2,  # Weight for reconstruction loss
 }
 
 class OddOneOutDataset(Dataset):
@@ -125,6 +129,33 @@ class Trainer:
         right = left + crop_w
         
         fov = image[:, :, top:bottom, left:right]
+
+        # Update the Heatmap based on the FOV
+                
+        # Apply decay to the entire heatmap (memory fades over time)
+        self.model.heatmap = self.model.heatmap * self.config['heatmap_decay']
+        
+        # Create a more subtle Gaussian update centered on the viewed region
+        sigma = max(crop_h, crop_w) / 3  # Controls the smoothness
+
+        y_grid, x_grid = torch.meshgrid(
+            torch.arange(0, h, device=self.model.heatmap.device),
+            torch.arange(0, w, device=self.model.heatmap.device),
+            indexing='ij'
+        )
+        
+        # center of the crop
+        center_y = top + crop_h // 2
+        center_x = left + crop_w // 2
+        
+        # Create Gaussian weight update
+        gaussian = torch.exp(-((x_grid - center_x)**2 + (y_grid - center_y)**2) / (2 * sigma**2))
+        
+        update_strength = 0.6  # Maximum value to add
+        update = gaussian * update_strength
+        
+        # Update heatmap and clamping to ensure values stay in [0, 1]
+        self.model.heatmap = torch.clamp(self.model.heatmap + update, 0.0, 1.0)
         
         # resize the FOV to 224x224 for ResNet
         fov_resized = F.interpolate(fov, size=(224, 224), mode='bilinear', align_corners=False)
@@ -160,16 +191,7 @@ class Trainer:
             return (x, y), True, decision_quadrant
     
     def train_episode(self, image, label):
-        """Train on a single episode (one image).
-        
-        Args:
-            image: Input image tensor
-            label: Ground truth label
-            
-        Returns:
-            total_reward: Total reward for this episode
-            total_loss: Total loss for this episode
-        """
+        """Train on a single episode (one image)."""
         self.model.reset_memory()
         self.optimizer.zero_grad()
         
@@ -178,27 +200,37 @@ class Trainer:
         # random start location
         position = (random.randint(0, 1), random.randint(0, 1))
         
-        # Storage for rewards, log probs, and values
+        # Storage for everything needed for loss calculation
         rewards = []
         log_probs = []
         values = []
-        entropy_sum = 0  # Changed from list to running sum
-        # For decoder loss (not implemented yet)
-        decoder_loss = torch.tensor(0.0, device=self.device)
+        reconstructions = []  
+        heatmaps = [] 
+        entropy_sum = 0
         
         decision_made = False
+        
+        # Make sure heatmap is on the correct device
+        if self.model.heatmap.device != self.device:
+            self.model.heatmap = self.model.heatmap.to(self.device)
         
         for step in range(self.config['max_steps_per_episode']):
             # Get FOV at current position
             fov = self.get_fov(image, position)
             
+            # Store a copy of the current heatmap after it's been updated in get_fov
+            heatmaps.append(self.model.heatmap.clone())
+            
             # Forward pass through model
-            action_probs, value, _ = self.model(fov)
+            action_probs, value, reconstruction = self.model(fov)
+            
+            # Store reconstruction for decoder loss calculation
+            reconstructions.append(reconstruction)
             
             # Calculate entropy for exploration
             dist = torch.distributions.Categorical(action_probs)
             entropy = dist.entropy().mean()
-            entropy_sum += entropy  # Add to running sum instead of appending
+            entropy_sum += entropy
             
             # Sample action
             action = dist.sample()
@@ -214,7 +246,7 @@ class Trainer:
             if is_decision:
                 decision_made = True
                 # Check if the quadrant chosen matches the odd-one-out label
-                if decision_quadrant == label:  # Direct comparison with label
+                if decision_quadrant == label:
                     reward += self.config['correct_reward']
                 else:
                     reward += self.config['incorrect_reward']
@@ -233,7 +265,38 @@ class Trainer:
         # If no decision was made by max steps, penalize
         if not decision_made:
             rewards.append(self.config['incorrect_reward'])
+        
+        # Calculate decoder loss if we have reconstructions
+        decoder_loss = torch.tensor(0.0, device=self.device)
+        if reconstructions:
+            # Image should be 272x272 but just in case
+            orig_image = F.interpolate(image, size=(272, 272), mode='bilinear', align_corners=False)
             
+            # Calculate weighted reconstruction loss
+            total_decoder_loss = 0.0
+            for i, recon in enumerate(reconstructions):
+                # Get the corresponding heatmap for this step
+                step_heatmap = heatmaps[i]
+                
+                # Calculate pixel-wise MSE loss - shape: [batch_size, 3, 272, 272]
+                pixel_loss = F.mse_loss(recon, orig_image, reduction='none')
+                
+                # Expand heatmap to apply to each channel separately
+                # From [272, 272] to [1, 3, 272, 272]
+                expanded_heatmap = step_heatmap.unsqueeze(0).unsqueeze(0).expand(-1, 3, -1, -1)
+                
+                weighted_loss = pixel_loss * expanded_heatmap
+                
+                # Now average the weighted loss across all dimensions
+                step_decoder_loss = weighted_loss.mean()
+                total_decoder_loss += step_decoder_loss
+            
+            # Average over steps
+            decoder_loss = total_decoder_loss / len(reconstructions)
+            
+            # Apply weight from config
+            decoder_loss = self.config['decoder_loss_weight'] * decoder_loss
+        
         # Calculate returns and advantages for actor-critic
         returns = []
         advantages = []
@@ -273,9 +336,19 @@ class Trainer:
         loss = policy_loss + \
                self.config['value_loss_weight'] * value_loss + \
                self.config['entropy_weight'] * entropy_loss + \
-               decoder_loss  # Currently 0
+               decoder_loss
         
-        # Backpropagation
+        # Notes for losses:
+        # punish revisits?
+        # reward information gain?
+        # change decoder loss because right now we force it to make exact reconstructions
+        # this might not be needed and maybe too complex so we might encourage it to stay in local minima
+        # other ideas: 
+        # Perceptual loss using VGG16 or similar, 
+        # SSIM
+        # Compare patches rather than single pixels
+        # semantic segmentation?
+        
         loss.backward()
         self.optimizer.step()
         
