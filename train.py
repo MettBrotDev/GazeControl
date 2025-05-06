@@ -7,6 +7,8 @@ from torchvision import transforms
 from PIL import Image
 from Model import CognitiveModel
 import random
+from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 
 # Note: All images will be 272x272
 
@@ -25,7 +27,7 @@ CONFIG = {
     'value_loss_weight': 0.5,  # Balancing value and policy losses
     'max_steps_per_episode': 20,  # Maximum glimpses per image to not get stuck in a loop
     'correct_reward': 1.0,  # Reward for correct prediction
-    'incorrect_reward': -0.5,  # Penalty for incorrect prediction
+    'incorrect_reward': -1.0,  # Penalty for incorrect prediction
     'step_penalty': -0.05,  # Small penalty for each step to encourage efficiency
     'heatmap_decay': 0.95,  # Decay factor for heatmap
     'decoder_loss_weight': 0.2,  # Weight for reconstruction loss
@@ -79,6 +81,15 @@ class Trainer:
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
+        
+        # Setup TensorBoard
+        current_time = datetime.now().strftime('%b%d_%H-%M-%S')
+        self.log_dir = os.path.join('./runs', f'gazecontrol_{current_time}')
+        self.writer = SummaryWriter(log_dir=self.log_dir)
+        self.global_step = 0
+        
+        # Log hyperparameters
+        self.writer.add_text('Hyperparameters', str(config))
         
         # Initialize model
         self.model = CognitiveModel(
@@ -262,9 +273,11 @@ class Trainer:
             log_probs.append(log_prob)
             values.append(value)
         
+        steps_taken = step + 1  # Count steps including the current one
+        
         # If no decision was made by max steps, penalize
         if not decision_made:
-            rewards.append(self.config['incorrect_reward'])
+            rewards[-1] += self.config['incorrect_reward']
         
         # Calculate decoder loss if we have reconstructions
         decoder_loss = torch.tensor(0.0, device=self.device)
@@ -338,21 +351,43 @@ class Trainer:
                self.config['entropy_weight'] * entropy_loss + \
                decoder_loss
         
-        # Notes for losses:
-        # punish revisits?
-        # reward information gain?
-        # change decoder loss because right now we force it to make exact reconstructions
-        # this might not be needed and maybe too complex so we might encourage it to stay in local minima
-        # other ideas: 
-        # Perceptual loss using VGG16 or similar, 
-        # SSIM
-        # Compare patches rather than single pixels
-        # semantic segmentation?
+        
+        
+        # Log to TensorBoard
+        self.writer.add_scalar('Train/policy_loss', policy_loss.item(), self.global_step)
+        self.writer.add_scalar('Train/value_loss', value_loss.item(), self.global_step)
+        self.writer.add_scalar('Train/entropy_loss', entropy_loss, self.global_step)
+        self.writer.add_scalar('Train/decoder_loss', decoder_loss.item(), self.global_step)
+        self.writer.add_scalar('Train/total_loss', loss.item(), self.global_step)
+        self.writer.add_scalar('Train/episode_reward', sum(rewards), self.global_step)
+        self.writer.add_scalar('Train/episode_steps', steps_taken, self.global_step)
+        self.writer.add_scalar('Train/correct_prediction', 1 if decision_made and decision_quadrant == label else 0, self.global_step)
+        
+        # Periodically log visuals (heatmap and reconstruction)
+        if self.global_step % 100 == 0 and len(heatmaps) > 0:
+            # Log final heatmap
+            heatmap_img = heatmaps[-1].cpu().unsqueeze(0)  # Add channel dimension for grayscale
+            self.writer.add_image('Train/heatmap', heatmap_img, self.global_step)
+            
+            # Log reconstruction if available
+            if len(reconstructions) > 0:
+                # Original image
+                orig_img = F.interpolate(image, size=(272, 272), mode='bilinear', align_corners=False)[0].cpu()
+                
+                # Last reconstruction
+                recon_img = reconstructions[-1][0].detach().cpu()
+                
+                # Combine and log
+                comparison = torch.cat([orig_img, recon_img], dim=2)  # Side by side
+                self.writer.add_image('Train/original_vs_reconstruction', comparison, self.global_step)
+        
+        # Increment global step
+        self.global_step += 1
         
         loss.backward()
         self.optimizer.step()
         
-        return sum(rewards), loss.item()
+        return sum(rewards), loss.item(), steps_taken
     
     def train(self):
         """Main training loop using batching and sampling."""
@@ -364,6 +399,8 @@ class Trainer:
             self.model.train()
             total_reward = 0
             total_loss = 0
+            total_steps = 0
+            correct_decisions = 0
             
             # Create a random subset of the training data for this epoch
             indices = torch.randperm(len(self.train_dataset))[:images_per_epoch]
@@ -375,9 +412,15 @@ class Trainer:
                 image, label = self.train_dataset[idx]
                 image = image.unsqueeze(0)  # Add batch dimension
                 
-                reward, loss = self.train_episode(image, label)
+                reward, loss, steps = self.train_episode(image, label)
                 total_reward += reward
                 total_loss += loss
+                total_steps += steps
+                
+                # Track correct decisions based on reward
+                if reward > self.config['incorrect_reward']:
+                    correct_decisions += 1
+                
                 processed_images += 1
                 
                 # Print progress every 50 images
@@ -387,9 +430,21 @@ class Trainer:
             
             avg_reward = total_reward / images_per_epoch
             avg_loss = total_loss / images_per_epoch
+            avg_steps = total_steps / images_per_epoch
+            accuracy = correct_decisions / images_per_epoch
+            
+            # Log epoch-level metrics
+            self.writer.add_scalar('Epoch/avg_reward', avg_reward, epoch)
+            self.writer.add_scalar('Epoch/avg_loss', avg_loss, epoch)
+            self.writer.add_scalar('Epoch/avg_steps', avg_steps, epoch)
+            self.writer.add_scalar('Epoch/accuracy', accuracy, epoch)
+            
+            # Log learning rate
+            self.writer.add_scalar('Epoch/learning_rate', self.optimizer.param_groups[0]['lr'], epoch)
             
             print(f"Epoch {epoch+1}/{total_epochs} - " 
-                  f"Avg Reward: {avg_reward:.4f}, Avg Loss: {avg_loss:.4f}")
+                  f"Avg Reward: {avg_reward:.4f}, Avg Loss: {avg_loss:.4f}, "
+                  f"Avg Steps: {avg_steps:.2f}, Accuracy: {accuracy:.4f}")
             
             # Run validation every 5 epochs or at the end
             if (epoch + 1) % 5 == 0 or epoch == total_epochs - 1:
@@ -433,7 +488,14 @@ class Trainer:
         accuracy = correct / len(self.val_loader)
         
         print(f"Validation - Avg Reward: {avg_reward:.4f}, Accuracy: {accuracy:.4f}")
+    
+    def __del__(self):
+        """Clean up TensorBoard writer when object is destroyed."""
+        if hasattr(self, 'writer'):
+            self.writer.close()
 
 if __name__ == "__main__":
     trainer = Trainer(CONFIG)
+    print("To view training progress with TensorBoard, run:")
+    print("tensorboard --logdir=./runs")
     trainer.train()

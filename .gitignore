@@ -8,3 +8,4 @@ Data/task_shape/test
 Data/task_shape/test_gen
 Data/task_shape/val
 .vscode/
+runs/
