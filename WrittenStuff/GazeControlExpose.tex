@@ -1,0 +1,66 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman,english]{babel}
+\usepackage{csquotes}
+\usepackage{amsmath}
+\usepackage{parskip}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{Exposé for Bachelor's Thesis\\[1ex]
+\large{GazeControl}}
+\author{Florentin Doll\\
+Supervisor: Tomáš Daniš\\
+Advisor: Prof. Dr. Martin V. Butz\\
+Date: \today}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{1. Introduction and Motivation}
+Humans solve complex visual reasoning tasks every day with remarkable speed and accuracy. In contrast, computer vision systems typically process all pixels of an image at a uniform resolution, overlooking the natural attentional focus provided by foveated vision. 
+By emulating human-like vision—allocating high resolution to task-relevant regions and lower resolution elsewhere—artificial agents can become more efficient and their decision-making more interpretable by revealing which areas drew their attention.
+
+\section*{2. Research Question and Objectives}
+\textbf{Research Question:} Can we build artificial agents that, like humans, sequentially \enquote{look} at parts of an image using a limited foveal window and integrate observations over time to solve visual reasoning tasks more efficiently?\\
+My main objective is to train a model that mirrors human visual attention and decision processes. To this end, I will:
+\begin{enumerate}[label=\arabic*.]
+  \item Model the human fovea and implement a variable-focus sampling mechanism.
+  \item Integrate a memory module (\eg, GRU or LSTM) to accumulate evidence across fixations.
+  \item Learn a reinforcement learning policy (\eg, Actor-Critic or PPO) that decides at each step whether to shift gaze or to issue a final decision.
+  \item Add a decoder that visualizes the internal memory state at each time step, providing insights into the agent’s reasoning.
+\end{enumerate}
+
+\section*{3. Related Literature and Resources}
+\subsection*{Datasets}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Compositional Visual Relations (CVR)} (Zerroug \emph{et al.}, 2022): A benchmark of 103 compositional odd-one-out tasks evaluating sample efficiency and generalization.
+  \item \textbf{Pathfinder Challenge} (Linsley \emph{et al.}, 2018): Tasks requiring the agent to determine whether two marked points are connected by a continuous path, testing long-range spatial integration.
+\end{itemize}
+
+\subsection*{Key Related Work}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Recurrent Attention Model (RAM)} (Mnih \emph{et al.}, 2014): A pioneering hard-attention network using reinforcement learning to select sequential high-resolution glimpses for image classification.
+  \item \textbf{Active Vision RL under Limited Observability} (Shang and Ryoo, 2023): An RL framework that simultaneously learns motor and gaze policies, rewarding sensorimotor alignment to improve task performance.
+  \item \textbf{Horizontal GRU (hGRU)} (Linsley \emph{et al.}, 2018): A convolutional RNN inspired by cortical association fields that excels on the Pathfinder dataset, demonstrating efficient long-range grouping.
+\end{itemize}
+
+\section*{4. Methodology}
+Our architecture will combine:
+\begin{itemize}[leftmargin=*]
+  \item A \textbf{foveated sampler} to extract high-resolution features at the current fixation (via blurring + CNN or a differentiable foveation module).
+  \item A \textbf{memory module} (GRU/LSTM) that integrates new glimpses with past information.
+  \item An \textbf{actor} that, based on the memory state, chooses between a gaze shift or issuing the final classification.
+  \item A \textbf{decoder} that upsamples the memory state into an image, visualizing the agent’s internal representation.
+\end{itemize}
+
+To train the model, we will rely primarily on a reinforcement learning loss: correct decisions are rewarded, incorrect ones are penalized, and a small penalty is applied for each additional step taken to encourage efficiency. However, relying solely on this sparse reward signal may result in slow or unstable learning.
+
+To support and guide training, we introduce an auxiliary decoder loss. The decoder reconstructs the agent’s current memory state into an image, and we compare this reconstruction either to the original image (autoencoder-style) or to a feature-based representation. Instead of using a full image loss—which could force the model into premature and inaccurate reconstructions—we will mask the loss to only include regions that the model has already seen. This can be implemented using a heatmap that tracks visited locations. Alternatively, we may extract features from the reconstructed and original images using the same encoder and compare them at the feature level to prioritize meaningful information over exact pixel values. This allows the decoder to guide learning without interfering with the sequential nature of attention.
+
+\end{document}

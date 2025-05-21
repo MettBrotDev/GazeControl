@@ -1,0 +1,55 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman,english]{babel}
+\usepackage{csquotes}
+\usepackage{amsmath}
+\usepackage{parskip}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{Exposé for Bachelor's Thesis\\[1ex]
+\large{GazeControl}}
+\author{Florentin Doll\\
+Supervisor: Prof. Dr. Martin V. Butz\\
+Date: \today}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{1. Introduction and Motivation}
+Humans solve complicated visual reasoning tasks every day with remarkable speed and accuracy. In contrast to humans, computers process all of the pixels of an image at once using a uniform resolution. This leads to a loss of natural attention that we usually get through the center of our foveated vision. \\
+If computers were to use human-like vision they could get more efficient by only looking at important parts of the image, having a higher resolution in those spots of interest and a lower resolution in uninteresting spots. It would also make the decision making of the model more transparent since we could see what parts of the image drew its attention.
+
+\section*{2. Research Question and Objectives}
+Can we build artificial agents that, like humans, selectively 'look' at parts of an image in a sequential way, using information over time to solve visual reasoning tasks more efficiently?\\\\
+My main research objective is to train a model that can solve visual reasoning tasks, similar to how humans would approach it. To achieve this i will model the human fovea, as well as human attention and decision processes when performing visual tasks. Combined with a memory module that will have a decoder to visualize the information state of the agent in each timestep.\\
+Thus, we create a model that acts similar to humans when it comes to solving visual reasoning tasks; we also hope to get some valuable insights into the underlying decision-making process through the memory states and the attention pattern of the fovea.
+
+\section*{3. Related literature and used rescources}
+
+Datasets:\\
+- The Compositional Visual Relations (CVR) benchmark (Zerroug et al., 2022)\\
+Compositional odd one out tasks\\
+- The Pathfinder challenge (Linsley et al., 2018)\\
+Given two dots and multiple paths, decide whether the dots are connected through a path.\\
+(there are other interesting ones but i would start with those first)
+
+Related work / current state of research:
+-Active Vision Reinforcement Learning under Limited Visual Observability (Shang and Ryoo et al. 2023)\\
+-Recurrent Attention Model (RAM) (Minh et al., 2014) as well as multiple follow up papers.
+
+\section*{4. Methodology}
+
+For this to work, we need to combine multiple models into our architecture.
+First, we need a feature extraction model that uses foveated vision with a certain center of attention that can be changed. For this i will either blur the image and then use something like a ResNet with some fine-tuning on that, or i will look into foveated sampling models. \\
+These features will feed into a memory module that combines already existing knowledge with the new features that we explored at each step. Here i will probably start with a GRU-module, maybe considering using an LSTM-model later.\\
+On top of that memory module, we build an actor. The actor will decide whether to lock in a decision or move the center of attention for each step. I'm not really sure which reinforcement learning architecture would be best here, so i might just try out different ones (Actor critic, PPO, ...).\\
+Also, based on the memory module, we will have a decoder that decodes the current memory state, to visually show what the model remembers about the task. This will be done through convolutional layers that up-sample from the memory dimensions to an output image.\\
+Lastly for training, we will use the normal reinforcement learning loss, where we punish wrong decisions, reward right ones, and add a little punishment for taking steps later on. However, having only that loss propergate through the entire architecture does not sound like it's gonna find a good solution. At least not in reasonable training time. This is where the decoder comes in. With that we are able to use a loss similar to an auto-encoder (image-to-image loss). Since we do not want to force the model to early predictions, which are most likely going to make it under-fit, we have to be careful how to manage this loss. Right now I am thinking of a heatmap of places already visited in the image so that we can only use the loss of places it already saw. Though that might still be awkward since we don't actually need exact images, we only need the main features, so maybe we should run our feature extractor on the decoded image and then compare both extracted features?\\
+
+\end{document}
