@@ -1,4 +1,6 @@
 The Html sketch and Readme was basically entirely made by Claude (With some small changes by me)
 
+The Expose was written by me (As seen in the pre Ai file) and then i did the phrasing and visuals with ChatGPT (Proof-read obviously though)
+
 Copilot completion recommendations are active throughout the entire coding process.
 This is only for convenience, it doesnt create ideas it just helps writing the code. 
