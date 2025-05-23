@@ -1,83 +1,173 @@
-# Cognitive Modeling for Gaze Control in Visual Reasoning
+# GazeControl: Cognitive Modeling for Visual Reasoning
 
-This project implements a cognitive model that simulates human-like gaze control in visual reasoning tasks, specifically focused on odd-one-out detection. The model combines a limited field-of-view with reinforcement learning to learn efficient visual scanning strategies.
+> A reinforcement learning approach to human-like visual attention in odd-one-out detection tasks
 
-## Project Overview
+## 🎯 Overview
 
-The model mimics human visual attention by using:
-- A limited field-of-view that can only see portions of an image at once
-- A memory module (GRU) that integrates information over time
-- A reinforcement learning agent that learns where to look and when to decide
-- An image reconstruction component for validation and visualization
+This project implements a cognitive model that simulates human-like gaze control in visual reasoning tasks. Unlike traditional computer vision systems that process entire images uniformly, our model mimics human foveated vision by sequentially attending to relevant image regions through a limited field-of-view, integrating observations over time to make efficient decisions.
 
-## Repository Structure
+## 🔬 Research Motivation
 
-- **Model.py**: Neural network architecture (CNN feature extractor, GRU memory, actor-critic RL components)
-- **train.py**: Training pipeline including dataset loading, episode generation, and RL optimization
-- **Data/**: Contains the CVR dataset with odd-one-out visual reasoning tasks
-- **Dataset/**: Contains the code for the CVR dataset
+Humans solve complex visual reasoning tasks with remarkable speed and accuracy by strategically directing their attention. Our model addresses the research question: **Can artificial agents learn to sequentially "look" at parts of an image using a limited foveal window and integrate observations over time to solve visual reasoning tasks more efficiently?**
 
-## Installation
+### Key Innovation
+- **Foveated Vision**: Variable-focus sampling mechanism mimicking human visual attention
+- **Sequential Processing**: Memory-based integration of visual information over time
+- **Interpretable Decisions**: Gaze patterns reveal the model's reasoning process
+- **Efficient Learning**: Reinforcement learning optimizes attention strategies
 
+## 🏗️ Architecture
+
+The model combines four core components:
+
+```
+┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
+│ Foveated Sampler│ -> │ Memory (GRU) │ -> │ Actor-Critic RL │
+└─────────────────┘    └──────────────┘    └─────────────────┘
+                               │
+                               ▼
+                       ┌──────────────┐
+                       │   Decoder    │
+                       │ (Visualization)
+                       └──────────────┘
+```
+
+### Components
+
+1. **Foveated Sampler**
+   - Extracts high-resolution features at current fixation point
+   - Implements human-like limited field-of-view constraints
+
+2. **Memory Module (GRU)**
+   - Integrates sequential visual observations
+   - Maintains spatial and temporal context across fixations
+
+3. **Actor-Critic Agent**
+   - **Actor**: Decides between gaze shifts and final classification
+   - **Critic**: Evaluates state values for policy optimization
+
+4. **Decoder Network**
+   - Visualizes internal memory representations
+   - Provides interpretability and auxiliary training signal
+
+## 📊 Dataset
+
+### Compositional Visual Relations (CVR)
+- **103 compositional odd-one-out tasks**
+- Evaluates sample efficiency and generalization
+- Tests systematic visual reasoning capabilities
+
+### Task Generation
 ```bash
-# Clone this repository
-git clone <repository-url>
-cd CognitiveModeling
+# Generate dataset for specific task
+python ./Dataset/generate_dataset.py --task_idx 0 --data_dir ./Data
 
-# Create and activate a virtual environment (recommended)
+# Process and label data
+python ./Data/task_shape/MixNLabel.py
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.8+
+- PyTorch
+- OpenCV
+- NumPy
+
+### Installation
+```bash
+# Clone repository
+git clone <repository-url>
+cd GazeControl
+
+# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-## Usage
-
-Generate the data first:
-
+### Training
 ```bash
+# Generate training data
 python ./Dataset/generate_dataset.py --task_idx 0 --data_dir ./Data
-```
-(You can change the task index for generating different tasks)
-
-Then shuffle and label them:
-
-```bash
 python ./Data/task_shape/MixNLabel.py
-```
 
-To train the model:
-
-```bash
+# Train the model
 python train.py
 ```
 
-You can modify the configuration parameters in `train.py` to adjust:
-- Field-of-view size
-- Learning rate and optimization parameters
-- Reward structure
-- Network architecture dimensions
+## ⚙️ Configuration
 
-## Implementation Details
+Modify training parameters in `train.py`:
 
-The model operates by:
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `fov_size` | Field-of-view dimensions | `(64, 64)` |
+| `learning_rate` | Optimizer learning rate | `1e-4` |
+| `reward_correct` | Reward for correct decisions | `+1.0` |
+| `step_penalty` | Penalty per time step | `-0.01` |
+| `memory_dim` | GRU hidden dimensions | `512` |
 
-1. Looking at a limited portion of the image (field-of-view)
-2. Extracting features from this view using a CNN
-3. Integrating observations into memory using a GRU
-4. Deciding whether to move the gaze or make a classification
-5. Using reinforcement learning (actor-critic) to optimize this process
+## 🧠 Methodology
 
-The model is trained to identify the odd-one-out image by moving its gaze across the image in a strategic manner, similar to how humans scan images when solving reasoning problems.
+### Training Strategy
+The model learns through a combination of:
 
-## Future Work
+1. **Reinforcement Learning Loss**
+   - Rewards correct classifications
+   - Penalizes incorrect decisions
+   - Small step penalty encourages efficiency
 
-- Implementing finer-grained movement and smaller FOV sizes
-- Adding different constraints to model performance
-- Comparing model gaze patterns with human data
-- Exploring different network architectures and memory mechanisms
+2. **Auxiliary Decoder Loss**
+   - Guides learning through reconstruction
+   - Masked to visited regions only
+   - Feature-level comparison for meaningful learning
 
-## License
+### Learning Process
+1. **Sample** limited field-of-view region
+2. **Extract** CNN features from current glimpse
+3. **Integrate** with memory using GRU
+4. **Decide** between gaze shift or classification
+5. **Update** policy using actor-critic RL
 
-This project is part of a bachelor's thesis in Cgnitive modelling.
+## 📈 Evaluation Metrics
+
+- **Task Accuracy**: Correct odd-one-out identification
+- **Sample Efficiency**: Performance vs. number of fixations
+- **Gaze Patterns**: Attention trajectory analysis
+- **Generalization**: Cross-task performance
+
+## 🔍 Related Work
+
+- **Recurrent Attention Model (RAM)** - Mnih et al., 2014
+- **Active Vision RL** - Shang and Ryoo, 2023  
+- **Horizontal GRU (hGRU)** - Linsley et al., 2018
+
+## 📁 Project Structure
+
+```
+GazeControl/
+├── Model.py              # Neural network architecture
+├── train.py              # Training pipeline
+├── Data/                 # CVR dataset
+├── Dataset/              # Dataset generation code
+├── WrittenStuff/         # Documentation and thesis
+└── requirements.txt      # Dependencies
+```
+
+## 🔮 Future Directions
+
+- **Enhanced Resolution**: Finer-grained movement patterns
+- **Biological Constraints**: More realistic visual limitations  
+- **Human Comparison**: Gaze pattern validation with eye-tracking data
+- **Architecture Exploration**: Alternative memory and attention mechanisms
+
+## 📄 Academic Context
+
+This project is part of a Bachelor's Thesis in Cognitive Modeling, supervised by Tomáš Daniš and advised by Prof. Dr. Martin V. Butz.
+
+---
+
+*For detailed methodology and theoretical background, see the accompanying exposé in `WrittenStuff/GazeControlExpose.tex`*
