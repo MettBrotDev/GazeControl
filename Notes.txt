@@ -1,0 +1,1 @@
+Masked reconstruction loss in addition to the other one to make sure the region its seeing right now is correct.
