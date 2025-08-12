@@ -3,10 +3,11 @@ import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"      # suppress TF logs
 os.environ["XLA_FLAGS"] = "--xla_gpu_force_compilation_parallelism=1"
 
+import gc
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset, Dataset
 from torchvision import datasets, transforms
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.utils as vutils
@@ -14,13 +15,14 @@ import datetime
 import numpy as np
 from foveal_blur import foveal_blur
 import torch.distributions as D
+import glob
+from PIL import Image
 
 from models import GazeControlModel
 from config import Config          
 
 def clear_memory():
     if torch.cuda.is_available():
-        import gc
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -31,6 +33,11 @@ def train():
     run_dir = os.path.join("runs", log_name)
     os.makedirs(run_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=run_dir)  # Initialize tensorboard writer
+    
+    # Track images seen and checkpoint frequency
+    imgs_seen = 0
+    next_save_at = 5000
+
     # Setup transforms
     transform_img = transforms.Compose([
         transforms.Resize(Config.IMG_SIZE),
@@ -54,8 +61,23 @@ def train():
                                          transform=transform_img,
                                          download=True)
     else:
-        train_dataset = datasets.ImageFolder(root=Config.LOCAL_DATA_DIR,
-                                             transform=transform_img)
+        # Handle multiple local data directories
+        local_dirs = Config.get_local_data_dirs()
+        local_datasets = []
+        for data_dir in local_dirs:
+            if os.path.exists(data_dir):
+                dataset = SimpleImageDataset(data_dir, transform=transform_img)
+                local_datasets.append(dataset)
+                print(f"Added dataset from {data_dir} with {len(dataset)} images")
+            else:
+                print(f"Warning: Directory {data_dir} does not exist, skipping...")
+        
+        if not local_datasets:
+            raise ValueError("No valid local data directories found!")
+        
+        # Combine all local datasets
+        train_dataset = ConcatDataset(local_datasets) if len(local_datasets) > 1 else local_datasets[0]
+        print(f"Total combined dataset size: {len(train_dataset)} images")
 
     train_loader = DataLoader(train_dataset,
                               batch_size=Config.BATCH_SIZE,
@@ -63,11 +85,13 @@ def train():
                               num_workers=0)
 
     # Initialize model, loss and optimizer
-    # Current Task: Full reconstruction.
+    # Current Task: Full reconstruction with spatial memory.
     model = GazeControlModel(encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
-                             hidden_size=Config.HIDDEN_SIZE,
+                             state_size=Config.HIDDEN_SIZE,
                              img_size=Config.IMG_SIZE,
-                             fovea_size=Config.FOVEA_OUTPUT_SIZE).to(Config.DEVICE)
+                             fovea_size=Config.FOVEA_OUTPUT_SIZE,
+                             memory_size=Config.MEMORY_SIZE,
+                             memory_dim=getattr(Config, 'MEMORY_DIM', 4)).to(Config.DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=Config.LEARNING_RATE)
 
     rec_loss_fn = torch.nn.MSELoss()  # Reconstruction loss
@@ -89,9 +113,11 @@ def train():
             foveated_image = torch.from_numpy(blurred.astype(np.float32)/255.0)\
                                 .permute(2,0,1).unsqueeze(0).to(Config.DEVICE)
 
-            # Initialize recurrent state
-            h = torch.zeros(1, Config.HIDDEN_SIZE, device=Config.DEVICE)
-            c = torch.zeros(1, Config.HIDDEN_SIZE, device=Config.DEVICE)
+            # start tracking gaze history to penalize repeats
+            gaze_history = [gaze.squeeze(0)]
+
+            # Initialize spatial memory
+            memory = model.init_memory(1, Config.DEVICE)
 
             reconstruction = None
 
@@ -100,36 +126,96 @@ def train():
                 if step == 0:
                     # No previous rec_error and initialize next_value for TD target
                     prev_rec_error = torch.tensor(0.0, device=Config.DEVICE)
-                # rl step
-                reconstruction, (gaze_delta, stop_action), _, (h_new,c_new) = \
-                    model.sample_action(foveated_image, h, c, gaze)
+                # rl step (now also returns policy heads so we don't need another forward)
+                reconstruction, (gaze_delta, stop_action), policy_bundle, memory = \
+                    model.sample_action(foveated_image, memory, gaze)
+
+                # Unpack policy heads
+                state_value, gaze_mean, gaze_std, stop_logit, explore_mask = policy_bundle
 
                 # compute new reconstruction error
                 rec_error = rec_loss_fn(reconstruction, image) * Config.RECONSTRUCTION_WEIGHT
 
-                rec_loss = rec_error.clone()
+
+
+                # Regional reconstruction loss - focus on the foveal region with blur-aware weighting
+                # We create a masked reconstruction loss that matches the blur pattern
+                # This ensures that the region we look at gets through the network instead of getting lost (Weird way of putting that but makes sense in my mind)
+                
+                foveal_mask = torch.zeros_like(image)
+                foveal_half_size = Config.FOVEA_CROP_SIZE[0] // 2
+                
+                # Calculate the bounds of the foveal region
+                cx = int(gaze[0,0].item() * Config.IMG_SIZE[0])
+                cy = int(gaze[0,1].item() * Config.IMG_SIZE[1])
+                
+                # Ensure bounds are within image
+                x_start = max(0, cx - foveal_half_size)
+                x_end = min(Config.IMG_SIZE[0], cx + foveal_half_size)
+                y_start = max(0, cy - foveal_half_size)
+                y_end = min(Config.IMG_SIZE[1], cy + foveal_half_size)
+                
+                # Create distance-based weighting that matches the blur pattern
+                if x_end > x_start and y_end > y_start:
+                    # Create coordinate grids for the foveal region
+                    y_coords = torch.arange(y_start, y_end, device=Config.DEVICE).float()
+                    x_coords = torch.arange(x_start, x_end, device=Config.DEVICE).float()
+                    yy, xx = torch.meshgrid(y_coords, x_coords, indexing='ij')
+                    
+                    # Calculate distance from foveal center
+                    distances = torch.sqrt((xx - cx)**2 + (yy - cy)**2)
+                    max_distance = foveal_half_size
+                    norm_distances = distances / max_distance
+                    
+                    # Create weight map that matches foveal_blur: high weight in center, low at edges
+                    # This mimics the blur pattern from foveal_blur.py
+                    fovea_radius_norm = 0.2  # Same as in foveal_blur.py
+                    blur_strength = (norm_distances - fovea_radius_norm) / (1.0 - fovea_radius_norm)
+                    blur_strength = torch.clamp(blur_strength, 0, 1)
+                    
+                    # Invert blur strength to get reconstruction weight (high where blur is low)
+                    reconstruction_weight = 1.0 - blur_strength
+                    
+                    # Apply the weight to the mask
+                    foveal_mask[:, :, y_start:y_end, x_start:x_end] = reconstruction_weight.unsqueeze(0).unsqueeze(0)
+                
+                # Compute weighted reconstruction loss for the foveal region
+                weighted_reconstruction_diff = (reconstruction - image) * foveal_mask
+                foveal_rec_error = torch.mean(weighted_reconstruction_diff ** 2)
+                foveal_rec_loss = foveal_rec_error * Config.FOVEAL_RECONSTRUCTION_WEIGHT
+                
+                rec_loss = rec_error.clone() + foveal_rec_loss
+
+                # penalize if new gaze is too close to any previous gaze
+                dist_penalty = torch.tensor(0.0, device=Config.DEVICE)
+                for prev_gaze in gaze_history:
+                    dist = torch.norm(gaze - prev_gaze, dim=-1)
+                    # penalize based on how small the min distance is
+                    if dist.item() < 0.05:  # threshold for minimum distance
+                        penalty = (0.05 - dist.item()) * 2.0  # scale penalty
+                        dist_penalty += penalty
 
                 # reward = how much error dropped minus cost of an extra glimpse
                 # !!!!!!! WATCH OUT THIS IS ONLY FOR THIS TASK, if the Reward is caluclated differently its not useful anymore
                 improvement = (prev_rec_error - rec_error)
-                reward = improvement.detach() * Config.REWARD_SCALE - Config.EFFICIENCY_PENALTY
                 if step == 0:
-                    # Dont scale the first one since that one is pretty high by design
-                    reward = improvement.detach() - Config.EFFICIENCY_PENALTY
+                    # First step: don't scale improvement (it's artificially high)
+                    reward = improvement.detach() - Config.EFFICIENCY_PENALTY - dist_penalty
+                else:
+                    # Subsequent steps: scale improvement and include distance penalty
+                    reward = improvement.detach() * Config.REWARD_SCALE - Config.EFFICIENCY_PENALTY - dist_penalty
 
                 prev_rec_error = rec_error.detach()
 
-                # predict next state value for TD target
-                _, _, _, next_value = model.agent.forward(h_new.detach())
-                td_target = reward + Config.GAMMA * next_value.detach()
+                # For the spatial memory model, we use the state value from sample_action
+                td_target = reward  # Simple immediate reward for now
 
-                # compute value prediction & loss
-                _, _, _, value_pred = model.agent.forward(h)
+                # Value prediction is already computed in sample_action call above
+                value_pred = state_value
 
                 # 1) Critic loss
                 value_loss = nn.functional.mse_loss(value_pred, td_target.detach())
-                # 2) Actor (policy) loss
-                gaze_mean, gaze_std, stop_logit, _ = model.agent.forward(h)
+                # 2) Actor (policy) loss - use heads from sample_action (single forward)
                 gaze_dist = D.Normal(gaze_mean, gaze_std)
                 stop_prob = torch.sigmoid(stop_logit)
                 stop_dist = D.Bernoulli(stop_prob)
@@ -137,7 +223,10 @@ def train():
                 logp_gaze = gaze_dist.log_prob(gaze_delta).sum(-1)      # sum dims dx,dy
                 logp_stop = stop_dist.log_prob(stop_action)
                 advantage = (td_target - value_pred).detach()
-                policy_loss = -(logp_gaze + logp_stop) * advantage
+                # Zero-out gradients when exploring randomly
+                explore_mask_flat = explore_mask.squeeze(1)
+                policy_term = (1.0 - explore_mask_flat) * (logp_gaze + logp_stop)
+                policy_loss = -policy_term * advantage
 
                 # Entropy bonus for exploration
                 ent_gaze = gaze_dist.entropy().sum(-1)  # sum dims dx,dy
@@ -147,15 +236,13 @@ def train():
                 # 3) Combined loss
                 rl_loss = Config.VALUE_WEIGHT * value_loss \
                         + Config.POLICY_WEIGHT * policy_loss.mean() \
-                        - Config.ENTROPY_WEIGHT * entropy
-                
-                #print(f'[DEBUG] Reconstruction Loss: {rec_error.item():.4f}, Value Loss: {value_loss.item():.4f}, Policy Loss: {policy_loss.mean().item():.4f}, Entropy: {entropy.item():.4f}')
+                        - Config.ENTROPY_WEIGHT * entropy               
+
 
                 total_rl_loss = total_rl_loss + rl_loss
                 total_rec_loss = total_rec_loss + rec_loss * np.power(Config.STEP_RECONSTRUCTION_DISCOUNT, (step + 1) / Config.MAX_STEPS)
 
-                # update state & foveated_image (detach to avoid in‐place errors)
-                h, c = h_new, c_new
+                # Memory is already updated in the model.sample_action call
                 # clamp and apply gaze_delta
                 max_m = torch.tensor([Config.MAX_MOVE,
                                       Config.MAX_MOVE],
@@ -164,6 +251,7 @@ def train():
                 # Ensure gaze_delta is within bounds
                 gaze = (gaze + gaze_delta).detach()
                 gaze = torch.clamp(gaze, 0, 1)
+                gaze_history.append(gaze.squeeze(0))
                 # Update foveated_image based on new gaze
                 img_np = (image.squeeze(0).permute(1,2,0).cpu().numpy() * 255).astype(np.uint8)
                 cx = int(gaze[0,0].item() * Config.IMG_SIZE[0])
@@ -175,11 +263,11 @@ def train():
                                     .permute(2,0,1).unsqueeze(0).to(Config.DEVICE)
                 
                 if stop_action.item() == 1:
-                    pass
-                    #break         # Currently disabled due to issues during training
+                    if batch_idx < 2: 
+                        break   
 
             # average over all steps
-            total_rl_loss = total_rl_loss 
+            total_rl_loss = total_rl_loss * Config.RL_LOSS_WEIGHT
             total_rec_loss = total_rec_loss
 
             # Combine losses
@@ -189,6 +277,14 @@ def train():
             optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
+
+            # Update counters and maybe checkpoint every 5000 images
+            imgs_seen += images.size(0)
+            if imgs_seen >= next_save_at:
+                ckpt_path = os.path.join(run_dir, f"model_images_{imgs_seen}.pth")
+                torch.save(model.state_dict(), ckpt_path)
+                print(f"Checkpoint saved at {imgs_seen} images -> {ckpt_path}")
+                next_save_at += 5000
 
             global_step = epoch * len(train_loader) + batch_idx
             # log reconstruction and RL losses separately
@@ -208,6 +304,56 @@ def train():
         torch.save(model.state_dict(), model_path)
         print(f"Epoch {epoch} complete. Model saved to {model_path}")
     writer.close()
+
+class SimpleImageDataset(Dataset):
+    def __init__(self, data_dir, transform=None):
+        self.transform = transform
+        self.image_paths = []
+        
+        # Get all image files recursively from the directory
+        image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tiff', '*.webp']
+        
+        for ext in image_extensions:
+            # Search recursively with **/ pattern
+            pattern = os.path.join(data_dir, '**', ext)
+            self.image_paths.extend(glob.glob(pattern, recursive=True))
+            # Also search for uppercase extensions
+            pattern = os.path.join(data_dir, '**', ext.upper())
+            self.image_paths.extend(glob.glob(pattern, recursive=True))
+        
+        # Remove duplicates and sort
+        self.image_paths = sorted(list(set(self.image_paths)))
+        
+        # Filter out invalid images
+        valid_paths = []
+        for path in self.image_paths:
+            try:
+                with Image.open(path) as img:
+                    img.verify()  # Verify it's a valid image
+                valid_paths.append(path)
+            except Exception as e:
+                print(f"Skipping invalid image {path}: {e}")
+        
+        self.image_paths = valid_paths
+        print(f"Found {len(self.image_paths)} valid images in {data_dir}")
+    
+    def __len__(self):
+        return len(self.image_paths)
+    
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        try:
+            image = Image.open(img_path).convert('RGB')
+            if self.transform:
+                image = self.transform(image)
+            return image, 0  # Return dummy label since you don't need classes
+        except Exception as e:
+            print(f"Error loading image {img_path}: {e}")
+            # Return a black image as fallback
+            black_img = Image.new('RGB', (224, 224), color='black')
+            if self.transform:
+                black_img = self.transform(black_img)
+            return black_img, 0
 
 if __name__ == "__main__":
     train()

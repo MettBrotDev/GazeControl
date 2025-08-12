@@ -1,1 +1,5 @@
 Masked reconstruction loss in addition to the other one to make sure the region its seeing right now is correct.
+
+Edge loss??? (might work better for the datasets im using. Also maybe closer to humans? idk)
+
+@@ Maybe add some reward for exploring new regions

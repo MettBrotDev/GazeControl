@@ -20,6 +20,3 @@ class Config:
     VALUE_WEIGHT = 2.0           # scale of value loss
     POLICY_WEIGHT = 1.0            # scale of policy loss
     ENTROPY_WEIGHT = 0.01          # scale of entropy loss
-
-    # ----- Warmup parameters -----
-    PRETRAIN_SAMPLE_SIZE = 5000  # Number of samples for warmup

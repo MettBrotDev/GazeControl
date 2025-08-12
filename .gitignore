@@ -5,3 +5,4 @@ venv/
 Data/
 .vscode/
 runs/
+PastRuns/

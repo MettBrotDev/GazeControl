@@ -16,22 +16,37 @@ from foveal_blur import foveal_blur
 # Global Config placeholder
 Config = None
 
-def load_random_image(source):
+def load_random_image(source, config=None):
+    # Use passed config or fall back to global
+    cfg = config or Config
+    if cfg is None:
+        raise ValueError("Config must be provided either as parameter or global variable")
+    
     # define transforms
     t_img = transforms.Compose([
-        transforms.Resize(Config.IMG_SIZE),
+        transforms.Resize(cfg.IMG_SIZE),
         transforms.ToTensor(),
     ])
     t_mnist = transforms.Compose([
-        transforms.Resize(Config.IMG_SIZE),
+        transforms.Resize(cfg.IMG_SIZE),
         transforms.ToTensor(),
         transforms.Lambda(lambda x: x.repeat(3,1,1))
     ])
     if source=="mnist":
-        ds = datasets.MNIST(root=Config.MNIST_DATA_DIR, train=False,
+        ds = datasets.MNIST(root=cfg.MNIST_DATA_DIR, train=False,
                             transform=t_mnist, download=True)
+    elif source=="cifar100":
+        ds = datasets.CIFAR100(root=cfg.CIFAR100_DATA_DIR, train=False,
+                               transform=t_img, download=True)
     else:
-        ds = datasets.ImageFolder(root=Config.LOCAL_DATA_DIR, transform=t_img)
+        try:
+            ds = datasets.ImageFolder(root=cfg.LOCAL_DATA_DIR, transform=t_img)
+        except FileNotFoundError:
+            print(f"Warning: Local data directory '{cfg.LOCAL_DATA_DIR}' not found or has no class folders.")
+            print("Falling back to CIFAR100 dataset...")
+            ds = datasets.CIFAR100(root=cfg.CIFAR100_DATA_DIR, train=False,
+                                   transform=t_img, download=True)
+    
     idx = random.randrange(len(ds))
     img, _ = ds[idx]
     return img.unsqueeze(0)  # (1,3,H,W)
@@ -43,7 +58,7 @@ def run_episode(model, image, device):
     # initial foveation
     img_np = (image[0].permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
     cx,cy = int(gaze[0,0]*Config.IMG_SIZE[0]), int(gaze[0,1]*Config.IMG_SIZE[1])
-    fovs, recs = [], []
+    fovs, recs, centers = [], [], []              # add centers list
     # init LSTM state
     h = torch.zeros(1,Config.HIDDEN_SIZE,device=device)
     c = torch.zeros_like(h)
@@ -62,12 +77,13 @@ def run_episode(model, image, device):
         gaze = (gaze + delta).clamp(0,1)
         img_np = (image[0].permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
         cx,cy = int(gaze[0,0]*Config.IMG_SIZE[0]), int(gaze[0,1]*Config.IMG_SIZE[1])
+        centers.append((cx, cy))                   # record center
         if stop.item()==1:
             pass
             #break
-    return fovs, recs
+    return fovs, recs, centers                    # return centers
 
-def visualize(original, fovs, recs, out_png):
+def visualize(original, fovs, recs, centers, out_png):
     steps = len(fovs)
     rows = steps+1; cols=2
     fig, axs = plt.subplots(rows,cols, figsize=(4*cols,4*rows))
@@ -75,9 +91,11 @@ def visualize(original, fovs, recs, out_png):
     axs[0,0].imshow(original.permute(1,2,0).cpu().numpy()); axs[0,0].set_title("Original"); axs[0,0].axis('off')
     axs[0,1].axis('off')
     # each subsequent row
-    for i,(fov,rec) in enumerate(zip(fovs,recs),start=1):
+    for i, (fov, rec) in enumerate(zip(fovs, recs), start=1):
         axs[i,0].imshow(fov.permute(1,2,0).numpy()); axs[i,0].set_title(f"Fovea {i}"); axs[i,0].axis('off')
         axs[i,1].imshow(rec.permute(1,2,0).numpy()); axs[i,1].set_title(f"Recon {i}"); axs[i,1].axis('off')
+        cx, cy = centers[i-1]                      # lookup center
+        axs[i,1].scatter(cx, cy, c='r', marker='x', s=100)  # mark fovea center
     plt.tight_layout()
     plt.savefig(out_png)
     print(f"Saved visualization to {out_png}")
@@ -89,10 +107,20 @@ def main():
     parser.add_argument("--config_module", default="config",
                         help="config module name (e.g. 'config' or 'configSmol')")
     parser.add_argument("--checkpoint", required=True, help="path to .pth")
-    parser.add_argument("--source", choices=["mnist","local"], default=None,
+    parser.add_argument("--source", choices=["mnist","local","cifar100"], default=None,
                         help="override DATA_SOURCE from config")
     parser.add_argument("--out", default="test_episode.png")
     args = parser.parse_args()
+
+    # handle PastRuns folder for checkpoints and outputs
+    past_runs_dir = os.path.join(os.path.dirname(__file__), "PastRuns")
+    os.makedirs(past_runs_dir, exist_ok=True)
+    chkpt = args.checkpoint
+    if not os.path.isabs(chkpt):
+        chkpt = os.path.join(past_runs_dir, chkpt)
+    model_name = os.path.splitext(os.path.basename(chkpt))[0]
+    out_name = f"{model_name}_{args.out}"
+    out_path = os.path.join(past_runs_dir, out_name)
 
     # import chosen config module by name and set global Config
     config_module = importlib.import_module(args.config_module)
@@ -109,15 +137,17 @@ def main():
         encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
         hidden_size=Config.HIDDEN_SIZE,
         img_size=Config.IMG_SIZE,
-        fovea_size=Config.FOVEA_OUTPUT_SIZE
+        fovea_size=Config.FOVEA_OUTPUT_SIZE,
+        memory_size=Config.MEMORY_SIZE,
+        memory_dim=getattr(Config, 'MEMORY_DIM', 4)
     ).to(device)
-    state = torch.load(args.checkpoint, map_location=device)
+    state = torch.load(chkpt, map_location=device)
     model.load_state_dict(state)
     model.eval()
 
     img = load_random_image(source)
-    fovs, recs = run_episode(model, img, device)
-    visualize(img[0], fovs, recs, args.out)
+    fovs, recs, centers = run_episode(model, img, device)             # unpack centers
+    visualize(img[0], fovs, recs, centers, out_path)                  # pass centers
 
 if __name__=="__main__":
     main()
