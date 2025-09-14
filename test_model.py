@@ -8,10 +8,10 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import importlib          # changed
+from torch.distributions import Categorical
 
-from train import clear_memory    # reuse helper
+from train import clear_memory, crop_patch, eight_dir_deltas    # reuse helpers consistent with training
 from models import GazeControlModel
-from foveal_blur import foveal_blur
 
 # Global Config placeholder
 Config = None
@@ -51,51 +51,73 @@ def load_random_image(source, config=None):
     img, _ = ds[idx]
     return img.unsqueeze(0)  # (1,3,H,W)
 
-def run_episode(model, image, device):
+def run_episode(model, image, device, deterministic=False):
+    """Run a rollout matching train.py's RL policy loop.
+    Returns fovea patches, step reconstructions, centers, and final reconstruction.
+    deterministic: if True, use policy mean action; else sample from Normal.
+    """
     image = image.to(device)
-    # start at random gaze
-    gaze = torch.rand(1,2,device=device)*0.5 + 0.25
-    # initial foveation
-    img_np = (image[0].permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
-    cx,cy = int(gaze[0,0]*Config.IMG_SIZE[0]), int(gaze[0,1]*Config.IMG_SIZE[1])
-    fovs, recs, centers = [], [], []              # add centers list
-    # init LSTM state
-    h = torch.zeros(1,Config.HIDDEN_SIZE,device=device)
-    c = torch.zeros_like(h)
-    for step in range(Config.MAX_STEPS):
-        blurred = foveal_blur(img_np,(cx,cy),
-                              output_size=Config.FOVEA_OUTPUT_SIZE,
-                              crop_size=Config.FOVEA_CROP_SIZE)
-        fov = torch.from_numpy(blurred.astype(np.float32)/255.0)\
-                   .permute(2,0,1).unsqueeze(0).to(device)
-        with torch.no_grad():
-            rec, (delta, stop), _, (h,c) = model.sample_action(fov,h,c,gaze)
-        fovs.append(fov.cpu()[0])
-        recs.append(rec.cpu()[0])
-        # update gaze
-        delta = delta.clamp(-Config.MAX_MOVE, Config.MAX_MOVE)
-        gaze = (gaze + delta).clamp(0,1)
-        img_np = (image[0].permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
-        cx,cy = int(gaze[0,0]*Config.IMG_SIZE[0]), int(gaze[0,1]*Config.IMG_SIZE[1])
-        centers.append((cx, cy))                   # record center
-        if stop.item()==1:
-            pass
-            #break
-    return fovs, recs, centers                    # return centers
+    num_steps = Config.MAX_STEPS
+    # Random initial gaze in central 60%
+    gaze = torch.rand(1, 2, device=device) * 0.6 + 0.2
 
-def visualize(original, fovs, recs, centers, out_png):
+    # Init LSTM memory via model helper
+    state = model.init_memory(1, device)
+
+    fovs, recs, centers = [], [], []
+    with torch.no_grad():
+        for step in range(num_steps):
+            # Crop and forward
+            fov = crop_patch(image, gaze, Config.FOVEA_CROP_SIZE, resize_to=Config.FOVEA_OUTPUT_SIZE)
+            rec, state = model(fov, state, gaze)
+
+            fovs.append(fov.cpu()[0])
+            recs.append(rec.cpu()[0])
+
+            # Record pixel center for viz (x uses width, y uses height)
+            H, W = Config.IMG_SIZE
+            cx = int(gaze[0, 0].item() * (W - 1))
+            cy = int(gaze[0, 1].item() * (H - 1))
+            centers.append((cx, cy))
+
+            # Policy step: get action from actor-critic and update gaze (skip after final if desired)
+            h_t = state[0][-1]
+            logits, _ = model.policy_value(h_t, gaze)
+            if deterministic:
+                action_idx = torch.argmax(logits, dim=-1)
+            else:
+                cat = Categorical(logits=logits)
+                action_idx = cat.sample()
+            deltas = eight_dir_deltas(Config.MAX_MOVE, device=Config.DEVICE)
+            delta = deltas[action_idx]
+            gaze = torch.clamp(gaze + delta, 0.0, 1.0)
+
+        # Also compute final reconstruction from final state
+        final_rec = model.decode_from_state(state).cpu()[0]
+
+    return fovs, recs, centers, final_rec
+
+def visualize(original, fovs, recs, centers, final_rec, out_png):
     steps = len(fovs)
-    rows = steps+1; cols=2
-    fig, axs = plt.subplots(rows,cols, figsize=(4*cols,4*rows))
-    # row 0: original + blank
-    axs[0,0].imshow(original.permute(1,2,0).cpu().numpy()); axs[0,0].set_title("Original"); axs[0,0].axis('off')
-    axs[0,1].axis('off')
-    # each subsequent row
+    rows = steps + 1
+    cols = 3  # Original, step recon, final recon (first row shows final)
+    fig, axs = plt.subplots(rows, cols, figsize=(4*cols, 3.5*rows))
+
+    # Row 0: original, blank, final reconstruction
+    axs[0, 0].imshow(original.permute(1, 2, 0).cpu().numpy()); axs[0, 0].set_title("Original"); axs[0, 0].axis('off')
+    axs[0, 1].axis('off')
+    axs[0, 2].imshow(final_rec.permute(1, 2, 0).numpy()); axs[0, 2].set_title("Final Recon"); axs[0, 2].axis('off')
+
+    # Each subsequent row: fovea patch and step reconstruction
     for i, (fov, rec) in enumerate(zip(fovs, recs), start=1):
-        axs[i,0].imshow(fov.permute(1,2,0).numpy()); axs[i,0].set_title(f"Fovea {i}"); axs[i,0].axis('off')
-        axs[i,1].imshow(rec.permute(1,2,0).numpy()); axs[i,1].set_title(f"Recon {i}"); axs[i,1].axis('off')
-        cx, cy = centers[i-1]                      # lookup center
-        axs[i,1].scatter(cx, cy, c='r', marker='x', s=100)  # mark fovea center
+        axs[i, 0].imshow(fov.permute(1, 2, 0).numpy()); axs[i, 0].set_title(f"Fovea {i}"); axs[i, 0].axis('off')
+        axs[i, 1].imshow(rec.permute(1, 2, 0).numpy()); axs[i, 1].set_title(f"Recon {i}"); axs[i, 1].axis('off')
+        # overlay gaze center on the step recon
+        cx, cy = centers[i-1]
+        axs[i, 1].scatter(cx, cy, c='r', marker='x', s=60)
+        # third column left blank for alignment
+        axs[i, 2].axis('off')
+
     plt.tight_layout()
     plt.savefig(out_png)
     print(f"Saved visualization to {out_png}")
@@ -135,19 +157,33 @@ def main():
     device = Config.DEVICE
     model = GazeControlModel(
         encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
-        hidden_size=Config.HIDDEN_SIZE,
+        state_size=Config.HIDDEN_SIZE,
         img_size=Config.IMG_SIZE,
         fovea_size=Config.FOVEA_OUTPUT_SIZE,
-        memory_size=Config.MEMORY_SIZE,
-        memory_dim=getattr(Config, 'MEMORY_DIM', 4)
+        pos_encoding_dim=Config.POS_ENCODING_DIM,
+        lstm_layers=Config.LSTM_LAYERS,
+        decoder_latent_ch=Config.DECODER_LATENT_CH,
     ).to(device)
-    state = torch.load(chkpt, map_location=device)
-    model.load_state_dict(state)
+    raw = torch.load(chkpt, map_location=device)
+    # Accept common checkpoint formats
+    if isinstance(raw, dict) and 'state_dict' in raw:
+        state = raw['state_dict']
+    elif isinstance(raw, dict) and 'model_state_dict' in raw:
+        state = raw['model_state_dict']
+    else:
+        state = raw
+    try:
+        model.load_state_dict(state, strict=True)
+    except Exception as e:
+        print(f"Strict load failed ({e}); retrying with strict=False")
+        res = model.load_state_dict(state, strict=False)
+        print(f"Loaded with missing={len(getattr(res,'missing_keys',[]))} unexpected={len(getattr(res,'unexpected_keys',[]))}")
     model.eval()
 
-    img = load_random_image(source)
-    fovs, recs, centers = run_episode(model, img, device)             # unpack centers
-    visualize(img[0], fovs, recs, centers, out_path)                  # pass centers
+    img = load_random_image(source, config=Config)
+    # Deterministic by default for repeatability; change False to sample
+    fovs, recs, centers, final_rec = run_episode(model, img, device, deterministic=True)
+    visualize(img[0], fovs, recs, centers, final_rec, out_path)
 
 if __name__=="__main__":
     main()
