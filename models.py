@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import math
+from torchvision import models
 
 
 def create_spatial_position_encoding(gaze_coords: torch.Tensor, encoding_dim: int) -> torch.Tensor:
@@ -36,22 +37,24 @@ class Encoder(nn.Module):
     Input: (B, 3, H, W)
     Output: (B, hidden_size)
     """
-    def __init__(self, hidden_size=256, input_size=(16, 16)):
+    def __init__(self, hidden_size=256, input_size=(16, 16), c1: int = 24, c2: int = 48):
         super().__init__()
         self.input_size = input_size  # (H, W)
-        # Simple 3-layer CNN for 16x16 input
+        self.c1 = int(c1)
+        self.c2 = int(c2)
+        # Input-agnostic encoder: keep resolution with stride=1, then adaptively pool to 2x2
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 12, 4, stride=2, padding=1),            # [batch, 12, 8, 8] for 16x16 input
-            nn.ReLU(),
-            nn.Conv2d(12, 24, 4, stride=2, padding=1),           # [batch, 24, 4, 4]
-            nn.ReLU(),
-            nn.Conv2d(24, 48, 4, stride=2, padding=1),           # [batch, 48, 2, 2]
-            nn.ReLU(),
+            nn.Conv2d(3, self.c1, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.c1, self.c2, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
         )
+        self.spatial_pool = nn.AdaptiveAvgPool2d((2, 2))
 
     def forward(self, x):
         x = self.encoder(x)
-        x = x.view(x.size(0), -1)  # Flatten spatial features to vector
+        x = self.spatial_pool(x)
+        x = x.view(x.size(0), -1)  # Flatten (B, c2*2*2)
         return x
 
 
@@ -62,18 +65,18 @@ class DecoderCNN(nn.Module):
     def __init__(self, state_size: int, out_size=(32, 32), latent_ch: int = 48, out_activation: str = "sigmoid"):
         super().__init__()
         self.out_h, self.out_w = out_size
-        self.latent_ch = latent_ch
 
-        # Project flattened features back to spatial features
-        self.fc = nn.Linear(state_size, self.latent_ch * 4 * 4)
-
-        c1 = self.latent_ch
-        c2 = max(16, self.latent_ch // 2)
-        c3 = max(8, c2 // 2)
-
-        self.up1 = nn.ConvTranspose2d(c1, c2, 4, stride=2, padding=1)
-        self.up2 = nn.ConvTranspose2d(c2, c3, 4, stride=2, padding=1)
-        self.up3 = nn.ConvTranspose2d(c3, 3, 4, stride=2, padding=1)
+        self.decoder = nn.Sequential(
+            nn.Linear(state_size, 256 * 4 * 4),
+            nn.Unflatten(1, (256, 4, 4)),
+            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(inplace=True),
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(inplace=True),
+            nn.ConvTranspose2d(64, 3, 4, stride=2, padding=1),
+        )
 
         if out_activation == "tanh":
             self.output_act = nn.Tanh()
@@ -84,29 +87,53 @@ class DecoderCNN(nn.Module):
         """Decode from a flat state vector h -> (B,3,H,W)."""
         # h is flattened features: (B, state_size)
         B = h.size(0)
-        x = self.fc(h).view(B, self.latent_ch, 4, 4)
-        x = nn.functional.leaky_relu(self.up1(x), 0.1, inplace=True)
-        x = nn.functional.leaky_relu(self.up2(x), 0.1, inplace=True)
-        x = self.up3(x)
+        x = self.decoder(h)
         x = self.output_act(x)
         return x
 
 
+class FusionMLP(nn.Module):
+    """A small MLP to fuse what (multi-scale features) and where (pos enc + raw gaze).
+    This mimics the Glimpse Network from the RAM paper.
+    """
+    def __init__(self, in_dim: int, out_dim: int, hidden_mul: float = 2.0):
+        super().__init__()
+        hidden = max(out_dim, int(hidden_mul * out_dim))
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden),
+            nn.GELU(),
+            nn.LayerNorm(hidden),
+            nn.Linear(hidden, out_dim),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class GazeControlModel(nn.Module):
     """
-    Basic model with CNN encoder, plain LSTM memory, and CNN decoder to full image.
-    - Input each step: cropped patch around current gaze.
+    Basic model with shared CNN encoder, plain LSTM memory, and CNN decoder to full image.
+    Uses Multi-scale glimpses similar to the Glimpse sensor from the RAM paper.
+    - Input each step: one patch (B,3,Hc,Wc) or list/tuple of k patches for multi-scale.
     - Memory: nn.LSTM over steps.
     - Output each step: reconstructed full image (B,3,H,W).
     """
-    def __init__(self, encoder_output_size, state_size=768, img_size=(32, 32), fovea_size=(24, 24), pos_encoding_dim: int = 32, lstm_layers: int = 2, decoder_latent_ch: int = 48):
+    def __init__(self, encoder_output_size, state_size=768, img_size=(32, 32), fovea_size=(24, 24), pos_encoding_dim: int = 32, lstm_layers: int = 2, decoder_latent_ch: int = 48, k_scales: int = 3, fuse_to_dim: int | None = None, fusion_hidden_mul: float = 2.0, encoder_c1: int | None = None, encoder_c2: int | None = None):
         super().__init__()
-        self.encoder = Encoder(hidden_size=encoder_output_size, input_size=fovea_size)
+        # Allow scaling encoder channel widths via optional args
+        enc_c1 = 24 if encoder_c1 is None else int(encoder_c1)
+        enc_c2 = 48 if encoder_c2 is None else int(encoder_c2)
+        self.encoder = Encoder(hidden_size=encoder_output_size, input_size=fovea_size, c1=enc_c1, c2=enc_c2)
         self.state_size = state_size
         self.img_size = img_size
         self.pos_dim = pos_encoding_dim
-        # include raw gaze (2) + positional encoding
-        self.input_dim = encoder_output_size + self.pos_dim + 2
+        self.k_scales = max(1, int(k_scales))
+
+        # LSTM input dimension is the fusion output. If fuse_to_dim is None, keep at k*E + pos + 2
+        fused_dim = fuse_to_dim if fuse_to_dim is not None else (encoder_output_size * self.k_scales + self.pos_dim + 2)
+        fusion_in = encoder_output_size * self.k_scales + self.pos_dim + 2
+        self.fusion = FusionMLP(in_dim=fusion_in, out_dim=fused_dim, hidden_mul=fusion_hidden_mul)
+        self.input_dim = fused_dim
 
         # LSTM memory
         self.lstm = nn.LSTM(input_size=self.input_dim, hidden_size=state_size, num_layers=lstm_layers, batch_first=True)
@@ -114,16 +141,6 @@ class GazeControlModel(nn.Module):
 
         # CNN decoder from hidden state to image (default sigmoid for main training)
         self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch, out_activation="sigmoid")
-
-        # RL heads (actor-critic) on top of hidden state h_t and gaze context (pos enc + raw coords)
-        rl_in_dim = state_size + self.pos_dim + 2
-        # Discrete policy with 8 actions (8 direction moves)
-        self.policy_head = nn.Sequential(
-            nn.Linear(rl_in_dim, state_size // 2), nn.ReLU(), nn.Linear(state_size // 2, 8)
-        )
-        self.value_head = nn.Sequential(
-            nn.Linear(rl_in_dim, state_size // 2), nn.ReLU(), nn.Linear(state_size // 2, 1)
-        )
 
     def init_memory(self, batch_size, device):
         """Return zero (h0, c0) for LSTM of shape (num_layers, B, state_size)."""
@@ -136,60 +153,91 @@ class GazeControlModel(nn.Module):
         h = lstm_state[0][-1]  # (B,H) from top layer
         return self.decoder(h)
 
-    def forward(self, patch, lstm_state, gaze):
+    def forward(self, patches, lstm_state, gaze):
         """
         Args:
-            patch: (B,3,Hc,Wc) cropped image patch
+            patches: list/tuple of length k with each tensor shaped (B,3,Hc,Wc)
             lstm_state: (h,c) where each is (num_layers,B,state_size)
             gaze: (B,2) normalized [0,1]
         Returns:
             reconstruction: (B,3,H,W)
             next_state: next (h,c)
         """
-        B = patch.size(0)
-        feat = self.encoder(patch)                 # (B, encoder_output_size)
-        pe = create_spatial_position_encoding(gaze, self.pos_dim)  # (B,pos_dim)
-        step_in = torch.cat([feat, pe, gaze], dim=1)  # add raw gaze
-        step_in = step_in.unsqueeze(1)             # (B,1,input_dim)
+        # Expect a sequence of k patches; concatenate encoded features across scales
+        feats = [self.encoder(p) for p in patches]
+        feat = torch.cat(feats, dim=1)
+        pos_enc = create_spatial_position_encoding(gaze, self.pos_dim)  # (B,pos_dim)
+        fused_in = torch.cat([feat, pos_enc, gaze], dim=1)  # (B, k*E + pos + 2)
+        fused = self.fusion(fused_in)                  # (B, fused_dim)
+        step_in = fused.unsqueeze(1)                   # (B,1,input_dim)
         lstm_out, next_state = self.lstm(step_in, lstm_state)  # lstm_out: (B,1,H)
         h = lstm_out.squeeze(1)                    # (B,H)
         reconstruction = self.decoder(h)
         return reconstruction, next_state
 
-    # ---- RL API ----
-    def policy_value(self, h, gaze):
-        """Return discrete-action logits (8-way) and value given hidden state h and current gaze.
-        h: (B,H), gaze: (B,2)
-        returns: logits (B,8), value (B,)
-        """
-        pe = create_spatial_position_encoding(gaze, self.pos_dim)  # (B,pos_dim)
+
+class Agent(nn.Module):
+    """Actor-Critic head that consumes LSTM hidden state and gaze context.
+    """
+    def __init__(self, state_size: int, pos_encoding_dim: int, num_actions: int = 8):
+        super().__init__()
+        self.pos_dim = pos_encoding_dim
+        rl_in_dim = state_size + self.pos_dim + 2
+        shared_hidden = max(128, state_size // 2)
+        head_hidden = max(64, state_size // 4)
+
+        # Shared representation over [h, pos-enc, gaze]
+        self.shared = nn.Sequential(
+            nn.Linear(rl_in_dim, shared_hidden),
+            nn.GELU(),
+            nn.LayerNorm(shared_hidden),
+        )
+
+        # Policy and value heads operate on shared features
+        self.policy_head = nn.Sequential(
+            nn.Linear(shared_hidden, head_hidden),
+            nn.ReLU(),
+            nn.Linear(head_hidden, num_actions),
+        )
+        self.value_head = nn.Sequential(
+            nn.Linear(shared_hidden, head_hidden),
+            nn.ReLU(),
+            nn.Linear(head_hidden, 1),
+        )
+
+    def policy_value(self, h: torch.Tensor, gaze: torch.Tensor):
+        pe = create_spatial_position_encoding(gaze, self.pos_dim)
         rl_in = torch.cat([h, pe, gaze], dim=1)
-        logits = self.policy_head(rl_in)  # (B,8)
-        value = self.value_head(rl_in).squeeze(-1)  # (B,)
+        shared = self.shared(rl_in)
+        logits = self.policy_head(shared)
+        value = self.value_head(shared).squeeze(-1)
         return logits, value
 
 
 class ImageEncoderForPretrain(nn.Module):
-    """Encodes a full image (3,H,W) to flattened features for decoder pretraining."""
+    """User-provided encoder: Conv+BN+ReLU with stride-2 downsamples to 4x4, then FC to state_size."""
     def __init__(self, state_size: int, img_size=(32, 32)):
         super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 12, 4, stride=2, padding=1),            # [batch, 12, 16, 16]
-            nn.ReLU(),
-            nn.Conv2d(12, 24, 4, stride=2, padding=1),           # [batch, 24, 8, 8]
-            nn.ReLU(),
-            nn.Conv2d(24, 48, 4, stride=2, padding=1),           # [batch, 48, 4, 4]
-            nn.ReLU(),
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, 3, stride=2, padding=1), nn.BatchNorm2d(64), nn.LeakyReLU(inplace=True),
+            nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.BatchNorm2d(128), nn.LeakyReLU(inplace=True),
+            nn.Conv2d(128, 256, 3, stride=2, padding=1), nn.BatchNorm2d(256), nn.LeakyReLU(inplace=True),
         )
+        self.flatten = nn.Flatten()
+        self.fc = nn.Linear(256 * 4 * 4, state_size)
 
     def forward(self, x):
-        x = self.encoder(x)  # (B, 48, 4, 4)
-        x = x.view(x.size(0), -1)  # Flatten: (B, 768)
+        x = self.features(x)
+        x = self.flatten(x)
+        x = self.fc(x)
         return x
 
 
 class PretrainAutoencoder(nn.Module):
-    """Autoencoder to pretrain the DecoderCNN using full-image reconstruction."""
+    """Autoencoder to pretrain the DecoderCNN using full-image reconstruction.
+    The encoder projects to state_size so the decoder learns with the same input dimension
+    as in the main model (HIDDEN_SIZE).
+    """
     def __init__(self, state_size: int, img_size=(32, 32), decoder_latent_ch: int = 48, out_activation: str = "sigmoid"):
         super().__init__()
         self.encoder = ImageEncoderForPretrain(state_size=state_size, img_size=img_size)
@@ -199,3 +247,30 @@ class PretrainAutoencoder(nn.Module):
         h = self.encoder(x)
         out = self.decoder(h)
         return out
+    
+
+
+class PerceptualLoss(nn.Module):
+    """Perceptual loss using VGG19 features, with ImageNet normalization."""
+    def __init__(self, layer: str = 'features.16'):
+        super().__init__()
+        vgg = models.vgg19(weights=models.VGG19_Weights.DEFAULT).features
+        self.vgg_slice = nn.Sequential(*list(vgg.children())[:17])
+        self.vgg_slice.eval()  # use eval mode for stable features
+        for p in self.vgg_slice.parameters():
+            p.requires_grad = False
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        # Inputs are in [-1,1]; convert to [0,1] then normalize for VGG
+        mean = self.mean.to(device=x.device, dtype=self.mean.dtype)
+        std = self.std.to(device=y.device, dtype=self.std.dtype)
+        x_in = (x - mean) / std
+        y_in = (y - mean) / std
+        with torch.amp.autocast('cuda', enabled=False):
+            x_vgg = self.vgg_slice(x_in.float())
+            y_vgg = self.vgg_slice(y_in.float())
+            loss = nn.functional.mse_loss(x_vgg, y_vgg)
+        return loss

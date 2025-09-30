@@ -1,17 +1,24 @@
 class Config:
     IMG_SIZE = (32, 32)                # Target image size for training images
-    FOVEA_OUTPUT_SIZE = (16, 16)       # Larger patch fed to encoder
-    FOVEA_CROP_SIZE = (16, 16)         # Larger crop before optional resize
-    EPOCHS = 80
+    FOVEA_OUTPUT_SIZE = (9, 9)         # All scales are resized to 9x9 for the encoder
+    FOVEA_CROP_SIZE = (6, 6)           # Base crop size around gaze; multi-scale uses 6,12,24
+    EPOCHS = 200
+
     # Training hyperparameters
     LEARNING_RATE = 3e-4
     WEIGHT_DECAY = 1e-4
     GRAD_CLIP_NORM = 1.0
-    BATCH_SIZE = 1                     # No batching.
+    BATCH_SIZE = 64                    # Use batching now
     HIDDEN_SIZE = 768                  # LSTM hidden size (matches autoencoder latent)
     ENCODER_OUTPUT_SIZE = 192          # Patch encoder output: 48*2*2 = 192 for 16x16 patch
     POS_ENCODING_DIM = 64              # Positional encoding size
     LSTM_LAYERS = 1                    # LSTM layers
+
+    # Multi-scale glimpse settings
+    K_SCALES = 3                       # number of scales: sizes base*(2**i)
+    FUSION_TO_DIM = 256                # None to keep at k*E + pos + 2
+    FUSION_HIDDEN_MUL = 2.0            # width multiplier for FusionMLP hidden layer
+
     # Decoder capacity and options
     DECODER_LATENT_CH = 96             
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
@@ -25,8 +32,13 @@ class Config:
     CIFAR100_DATA_DIR = "./Data/cifar100"
 
     # Rollout (fixed 12 coverage positions)
-    MAX_STEPS = 12
+    MAX_STEPS = 20
     MAX_MOVE = 0.2
+
+    # Gaze movement bounds (keep gaze inside the central region to improve coverage)
+    USE_GAZE_BOUNDS = True
+    GAZE_BOUND_FRACTION = 0.1
+
 
     # Reconstruction loss weights (L1 dominant)
     MSE_WEIGHT = 0.1
@@ -52,7 +64,7 @@ class Config:
     # Full-model checkpoint (e.g., a "random move" trained model)
     # If set to a valid path, training will load this entire state_dict first (strict=False),
     # then optionally override decoder with PRETRAINED_DECODER_PATH if requested.
-    PRETRAINED_MODEL_PATH = '' #"./PastRuns/1M_rnd_model.pth"      # e.g., "./PastRuns/WorkingIshModel0628.pth" or empty to disable
+    PRETRAINED_MODEL_PATH = "./PastRuns/rnd_10M.pth"      # e.g., "./PastRuns/WorkingIshModel0628.pth" or empty to disable
 
     # Data source
     DATA_SOURCE = "cifar100"          # "local", "mnist", or "cifar100"
@@ -60,7 +72,7 @@ class Config:
     # RL settings (actor-critic on top of LSTM hidden state)
     RL_GAMMA = 0.95
     RL_LAMBDA = 0.95                 # for GAE advantage
-    RL_POLICY_LR = 1e-4
+    RL_POLICY_LR = 3e-4
     RL_VALUE_COEF = 0.5
     RL_ENTROPY_COEF = 0.02
     RL_LOSS_WEIGHT = 1.0             # scales the RL loss added to supervised loss
@@ -68,9 +80,9 @@ class Config:
     RL_INIT_STD = 0.2                # initial std for Gaussian policy (in unscaled delta units)
     RL_REWARD_SCALE = 50.0          # multiply per-step rewards to strengthen signal
     RL_NORM_ADV = True               # normalize advantages to zero-mean, unit-std
-    # RL-backbone coupling schedule
-    RL_DETACH_UNTIL_EPISODE = 100000  # detach RL from backbone for the first N episodes; 0 to disable
-    RL_RAMP_EPISODES = 400000         # linearly ramp RL_LOSS_WEIGHT over this many episodes after detach phase
+
+    # Train RL first: freeze backbone
+    RL_ONLY_EPOCHS = 3
 
     @classmethod
     def get_local_data_dirs(cls):

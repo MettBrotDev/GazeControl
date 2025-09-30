@@ -9,18 +9,34 @@ from torchvision import datasets, transforms
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.utils as vutils
 
-from models import PretrainAutoencoder
+from models import PretrainAutoencoder, ImageEncoderForPretrain, PerceptualLoss
 from config import Config
 
 
 def main():
     parser = argparse.ArgumentParser(description="Pretrain decoder as autoencoder")
+    parser.add_argument("--config_module", default="config", help="config module name (e.g. 'config' or 'configL')")
     parser.add_argument("--single", action="store_true", help="Overfit a single random image sampled from the selected dataset")
     parser.add_argument("--steps", type=int, default=None, help="Override Config.PRETRAIN_STEPS")
+    parser.add_argument("--batch-size", type=int, default=None, help="Override Config.PRETRAIN_BATCH_SIZE for pretraining")
     args = parser.parse_args()
 
+    # Dynamically load config if requested
+    global Config
+    if args.config_module and args.config_module != "config":
+        try:
+            import importlib
+            mod = importlib.import_module(args.config_module)
+            Config = mod.Config
+            print(f"Loaded config from {args.config_module}")
+        except Exception as e:
+            print(f"Failed to load config module '{args.config_module}', falling back to default. Error: {e}")
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join("runs", f"pretrain_decoder_{Config.DATA_SOURCE}_{timestamp}")
+    run_dir = os.path.join(
+        "runs",
+        f"pretrain_decoder_{Config.DATA_SOURCE}_ch{getattr(Config,'DECODER_LATENT_CH',0)}_{timestamp}"
+    )
     os.makedirs(run_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=run_dir)
 
@@ -54,12 +70,19 @@ def main():
         shuffle = False
         print(f"Pretraining on a single random dataset image (idx={idx})")
     else:
-        batch_size = max(8, getattr(Config, "PRETRAIN_BATCH_SIZE", 32))
+        cfg_bs = max(1, int(getattr(Config, "PRETRAIN_BATCH_SIZE", 32)))
+        batch_size = int(args.batch_size) if args.batch_size is not None else cfg_bs
+        batch_size = max(1, batch_size)
         shuffle = True
+    print(f"Using pretrain batch size: {batch_size}")
 
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0)
 
-    autoenc = PretrainAutoencoder(state_size=Config.HIDDEN_SIZE,
+    # Use state_size matching main model hidden size for decoder compatibility
+    enc_dim = int(Config.HIDDEN_SIZE)
+    print(f"Pretrain AE: state_size={enc_dim}, dec_latent_ch={Config.DECODER_LATENT_CH}")
+
+    autoenc = PretrainAutoencoder(state_size=enc_dim,
                                   img_size=Config.IMG_SIZE,
                                   decoder_latent_ch=Config.DECODER_LATENT_CH,
                                   out_activation="tanh").to(Config.DEVICE)
@@ -68,12 +91,16 @@ def main():
     lr = getattr(Config, "PRETRAIN_LR", 3e-3)
     opt = torch.optim.Adam(autoenc.parameters(), lr=lr, betas=(0.9, 0.99))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1000, Config.PRETRAIN_STEPS))
-    mse = nn.MSELoss(reduction="mean")
+    criterion = PerceptualLoss().to(Config.DEVICE)
+    l1_weight = float(getattr(Config, "PRETRAIN_L1_MIX", 5.0))
     l1 = nn.L1Loss(reduction="mean")
-    w_l1 = getattr(Config, "PRETRAIN_L1_WEIGHT", 0.8)
-    w_mse = getattr(Config, "PRETRAIN_MSE_WEIGHT", 0.2)
+
+    def total_variation(x):
+        tv_h = (x[:, :, 1:, :] - x[:, :, :-1, :]).abs().mean()
+        tv_w = (x[:, :, :, 1:] - x[:, :, :, :-1]).abs().mean()
+        return tv_h + tv_w
     use_amp = bool(getattr(Config, "PRETRAIN_USE_AMP", True))
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     steps = 0
     max_steps = args.steps if args.steps is not None else Config.PRETRAIN_STEPS
@@ -84,12 +111,10 @@ def main():
     while steps < max_steps:
         for images, _ in loader:
             images = images.to(Config.DEVICE)
-            with torch.cuda.amp.autocast(enabled=use_amp):
-                pred = autoenc(images)
-                # losses in [-1,1]
-                mse_val = mse(pred, images)
-                l1_val = l1(pred, images)
-                loss = w_mse * mse_val + w_l1 * l1_val
+            pred = autoenc(images)
+            loss_perc = criterion(pred, images)
+            l1_loss = l1(pred, images)
+            loss = loss_perc + l1_weight * l1_loss
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -98,9 +123,8 @@ def main():
             steps += 1
             if steps % 50 == 0:
                 writer.add_scalar("PretrainAE/loss", loss.item(), steps)
-                writer.add_scalar("PretrainAE/mse", mse_val.item(), steps)
-                writer.add_scalar("PretrainAE/l1", l1_val.item(), steps)
-                writer.add_scalar("PretrainAE/lr", sched.get_last_lr()[0], steps)
+                writer.add_scalar("PretrainAE/l1_loss", l1_loss.item(), steps)
+                writer.add_scalar("PretrainAE/loss_perc", loss_perc.item(), steps)
                 # log last sample only, like main training (orig vs recon)
                 with torch.no_grad():
                     img_last = (images[-1:].detach() + 1.0) / 2.0
@@ -110,7 +134,7 @@ def main():
                 now = time.time()
                 img_per_s = (50 * images.size(0)) / max(1e-6, (now - last_log_t))
                 last_log_t = now
-                print(f"step {steps:6d} | loss {loss.item():.4f} | l1 {l1_val.item():.4f} | mse {mse_val.item():.4f} | lr {sched.get_last_lr()[0]:.2e} | {img_per_s:.1f} img/s")
+                print(f"step {steps:6d} | loss {loss.item():.4f} | lr {sched.get_last_lr()[0]:.2e} | {img_per_s:.1f} img/s")
             # Track best checkpoint
             if loss.item() < best_loss:
                 best_loss = loss.item()

@@ -2,4 +2,29 @@ Edge loss??? (might work better for the datasets im using. Also maybe closer to 
 
 no blurring, cifar, random actions, 
 
-Bring back zero padding
+
+------------------------------------------------------------------
+
+Main Paper to talk about Recurrent Models of Visual Attention
+
+Important bits that might help me:
+
+    -   Glimpse sensor -> They take multiple images with different resolutions each step, that would help the localization and would genuenly be better than what im doing i think 
+    
+    -   Glimpse Network -> They combine the glimpse with the location BEFORE they put put them into the memory. This might help the LSTM opening gate bottleneck since it felt like it was hard for the lstm to accurately place the right pixels into the right location.
+
+###check logging a bit
+
+###20 steps
+
+###multiple image batches 32, 64
+
+###paper stuff
+
+###limit edges 
+
+
+
+I feel like the glimpse parameters might be too low right now (6x6 isnt that much compared to the 16x16 it got before)
+
+

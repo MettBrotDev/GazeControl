@@ -98,6 +98,9 @@ class ManualGazeTestGUI:
             pos_encoding_dim=Config.POS_ENCODING_DIM,
             lstm_layers=Config.LSTM_LAYERS,
             decoder_latent_ch=Config.DECODER_LATENT_CH,
+            k_scales=getattr(Config, 'K_SCALES', 3),
+            fuse_to_dim=getattr(Config, 'FUSION_TO_DIM', None),
+            fusion_hidden_mul=getattr(Config, 'FUSION_HIDDEN_MUL', 2.0),
         ).to(device)
         
         # Handle PastRuns folder for checkpoint
@@ -150,7 +153,11 @@ class ManualGazeTestGUI:
         global current_gaze, memory
         
         # Start at center
+        frac = float(getattr(Config, 'GAZE_BOUND_FRACTION', 0.1)) if getattr(Config, 'USE_GAZE_BOUNDS', False) else 0.0
+        lo, hi = frac, 1.0 - frac
         current_gaze = torch.tensor([[0.5, 0.5]], device=device, dtype=torch.float32)
+        if getattr(Config, 'USE_GAZE_BOUNDS', False):
+            current_gaze = current_gaze.clamp(min=lo, max=hi)
         
         # Reset LSTM memory
         memory = model.init_memory(1, device)
@@ -183,6 +190,10 @@ class ManualGazeTestGUI:
         gaze_y = max(0, min(1, gaze_y))
         
         current_gaze = torch.tensor([[gaze_x, gaze_y]], device=device, dtype=torch.float32)
+        if getattr(Config, 'USE_GAZE_BOUNDS', False):
+            frac = float(getattr(Config, 'GAZE_BOUND_FRACTION', 0.1))
+            lo, hi = frac, 1.0 - frac
+            current_gaze = current_gaze.clamp(min=lo, max=hi)
         
         # Process this gaze position through the model
         self.process_gaze_step()
@@ -192,20 +203,32 @@ class ManualGazeTestGUI:
         global current_gaze
         delta = (torch.rand_like(current_gaze) * 2.0 - 1.0) * Config.MAX_MOVE
         current_gaze = torch.clamp(current_gaze + delta, 0.0, 1.0)
+        if getattr(Config, 'USE_GAZE_BOUNDS', False):
+            frac = float(getattr(Config, 'GAZE_BOUND_FRACTION', 0.1))
+            lo, hi = frac, 1.0 - frac
+            current_gaze = current_gaze.clamp(min=lo, max=hi)
         self.process_gaze_step()
         
     def process_gaze_step(self):
         global current_gaze, memory
         
         # Prepare unblurred cutout around gaze
-        patch = crop_patch(current_image, current_gaze, Config.FOVEA_CROP_SIZE, resize_to=Config.FOVEA_OUTPUT_SIZE).to(device)
+        # Build multi-scale patches (match training)
+        base_h, base_w = Config.FOVEA_CROP_SIZE
+        k_scales = int(getattr(Config, 'K_SCALES', 3))
+        patches = []
+        for i in range(k_scales):
+            scale = 2 ** i
+            size = (base_h * scale, base_w * scale)
+            patches.append(crop_patch(current_image, current_gaze, size, resize_to=Config.FOVEA_OUTPUT_SIZE).to(device))
+        patch = patches[0]
         
         # Track memory change
         h_prev, c_prev = memory[0].clone().detach(), memory[1].clone().detach()
         
-        # Get model prediction
+        # Get model prediction (forward expects a list/tuple of patches)
         with torch.no_grad():
-            rec, memory = model(patch, memory, current_gaze)
+            rec, memory = model(patches, memory, current_gaze)
         
         # Compute memory change metric
         h_diff = (memory[0] - h_prev).abs()
@@ -215,14 +238,57 @@ class ManualGazeTestGUI:
         # Suggest next random gaze (for visualization)
         delta = (torch.rand_like(current_gaze) * 2.0 - 1.0) * Config.MAX_MOVE
         predicted_next_gaze = torch.clamp(current_gaze + delta, 0.0, 1.0)
-        
-        # Update display
-        self.update_display(patch.cpu()[0], rec.cpu()[0], predicted_gaze=predicted_next_gaze, memory_change=mem_change_text)
-        
+        if getattr(Config, 'USE_GAZE_BOUNDS', False):
+            frac = float(getattr(Config, 'GAZE_BOUND_FRACTION', 0.1))
+            lo, hi = frac, 1.0 - frac
+            predicted_next_gaze = predicted_next_gaze.clamp(min=lo, max=hi)
+
+        # Build composite centered overlay and update display
+        # Put largest patch first for correct background -> mid -> small overlay
+        composite = self._composite_centered([p.cpu()[0] for p in reversed(patches)])
+        self.update_display(patch.cpu()[0], rec.cpu()[0], predicted_gaze=predicted_next_gaze, memory_change=mem_change_text, composite=composite)
+
         # Update status
         self.status_label.config(text=f"Gaze: ({current_gaze[0,0]:.3f}, {current_gaze[0,1]:.3f}) | Mem Δ: {mem_change_text}")
         
-    def update_display(self, foveal_view=None, reconstruction=None, predicted_gaze=None, memory_change=None):
+    def _composite_centered(self, patches, base_upscale: int = 4):
+        if patches is None or len(patches) == 0:
+            return None
+        # Canvas = 9 * base_upscale (e.g., 36), overlays = [1.0, 0.5, 0.25] of canvas
+        canvas_size = int(9 * base_upscale)
+        canvas = torch.zeros(3, canvas_size, canvas_size)
+        scales = [1.0, 0.5, 0.25]
+        colors = [
+            torch.tensor([1.0, 1.0, 1.0]),  # large - white
+            torch.tensor([1.0, 1.0, 0.0]),  # mid - yellow
+            torch.tensor([1.0, 0.0, 0.0]),  # small - red
+        ]
+        outline_stride = 2  # dashed to look thinner
+        outline_alpha = 0.6
+        for i, p in enumerate(patches[:3]):
+            target = max(1, int(round(canvas_size * scales[i])))
+            p_res = F.interpolate(p.unsqueeze(0), size=(target, target), mode='nearest')[0]
+            y0 = (canvas_size - target) // 2
+            x0 = (canvas_size - target) // 2
+            canvas[:, y0:y0+target, x0:x0+target] = p_res
+            # Draw dashed 1px outline with alpha blending for thinner look
+            col = colors[i % len(colors)]
+            col3x1 = col.view(3, 1)
+            # top
+            sl = canvas[:, y0, x0:x0+target:outline_stride]
+            canvas[:, y0, x0:x0+target:outline_stride] = (1 - outline_alpha) * sl + outline_alpha * col3x1
+            # bottom
+            sl = canvas[:, y0+target-1, x0:x0+target:outline_stride]
+            canvas[:, y0+target-1, x0:x0+target:outline_stride] = (1 - outline_alpha) * sl + outline_alpha * col3x1
+            # left
+            sl = canvas[:, y0:y0+target:outline_stride, x0]
+            canvas[:, y0:y0+target:outline_stride, x0] = (1 - outline_alpha) * sl + outline_alpha * col3x1
+            # right
+            sl = canvas[:, y0:y0+target:outline_stride, x0+target-1]
+            canvas[:, y0:y0+target:outline_stride, x0+target-1] = (1 - outline_alpha) * sl + outline_alpha * col3x1
+        return canvas.permute(1,2,0).numpy()
+
+    def update_display(self, foveal_view=None, reconstruction=None, predicted_gaze=None, memory_change=None, composite=None):
         global current_gaze
         
         # Clear all axes
@@ -260,6 +326,13 @@ class ManualGazeTestGUI:
         else:
             axes[0, 1].set_title("Cutout Patch (click to generate)")
             
+        # Composite multi-scale view (bottom-right)
+        if composite is not None:
+            axes[1, 1].imshow(composite)
+            axes[1, 1].set_title("Composite (multi-scale)")
+        else:
+            axes[1, 1].set_title("Composite (generate a step)")
+
         # Reconstruction
         if reconstruction is not None:
             axes[1, 0].imshow(reconstruction.permute(1, 2, 0).numpy())
@@ -267,20 +340,10 @@ class ManualGazeTestGUI:
         else:
             axes[1, 0].set_title("Reconstruction (click to generate)")
             
-        # Info panel
-        axes[1, 1].text(0.1, 0.8, "Instructions:", fontsize=12, fontweight='bold')
-        axes[1, 1].text(0.1, 0.7, "• Click on original image to set gaze", fontsize=10)
-        axes[1, 1].text(0.1, 0.6, "• Red X = current gaze position", fontsize=10)
-        axes[1, 1].text(0.1, 0.5, "• Blue O = next random gaze", fontsize=10)
-        axes[1, 1].text(0.1, 0.4, "• Use 'New Image' for different image", fontsize=10)
-        axes[1, 1].text(0.1, 0.3, "• Use 'Reset Gaze' to start over", fontsize=10)
-        
-        # Memory change metric
+        # Minimal info text on top-right
+        axes[0, 1].text(0.05, 1.02, "Click original to set gaze", fontsize=10, transform=axes[0, 1].transAxes)
         if memory_change is not None:
-            axes[1, 1].text(0.1, 0.2, f"Memory change: {memory_change}", fontsize=10, color='purple')
-        
-        axes[1, 1].set_xlim(0, 1)
-        axes[1, 1].set_ylim(0, 1)
+            axes[0, 1].text(0.05, 0.97, f"Memory Δ: {memory_change}", fontsize=10, color='purple', transform=axes[0, 1].transAxes)
         
         # Refresh canvas
         canvas.draw()
