@@ -4,10 +4,17 @@ import datetime
 import argparse
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset, ConcatDataset, Dataset
 from torchvision import datasets, transforms
-from torch.utils.tensorboard import SummaryWriter
+import glob
+from PIL import Image
+# TensorBoard removed; using optional Weights & Biases instead
 import torchvision.utils as vutils
+try:
+    import wandb
+except Exception:
+    wandb = None
 
 from models import PretrainAutoencoder, ImageEncoderForPretrain, PerceptualLoss
 from config import Config
@@ -19,6 +26,12 @@ def main():
     parser.add_argument("--single", action="store_true", help="Overfit a single random image sampled from the selected dataset")
     parser.add_argument("--steps", type=int, default=None, help="Override Config.PRETRAIN_STEPS")
     parser.add_argument("--batch-size", type=int, default=None, help="Override Config.PRETRAIN_BATCH_SIZE for pretraining")
+    parser.add_argument("--no-perc", action="store_true", help="Disable perceptual loss during pretraining to save VRAM")
+    parser.add_argument("--perc-resize", type=int, default=None, help="Resize to this square size before perceptual loss (e.g., 224)")
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
+    parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
 
     # Dynamically load config if requested
@@ -38,7 +51,24 @@ def main():
         f"pretrain_decoder_{Config.DATA_SOURCE}_ch{getattr(Config,'DECODER_LATENT_CH',0)}_{timestamp}"
     )
     os.makedirs(run_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=run_dir)
+    # TensorBoard disabled; use W&B if enabled
+    wb = None
+    if args.wandb and wandb is not None:
+        wb = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_run_name or f"pretrain_decoder_{Config.DATA_SOURCE}_{timestamp}",
+            config={
+                "img_size": Config.IMG_SIZE,
+                "batch_size": int(args.batch_size) if args.batch_size is not None else int(getattr(Config, "PRETRAIN_BATCH_SIZE", 32)),
+                "lr": float(getattr(Config, "PRETRAIN_LR", 3e-3)),
+                "perc": not args.no_perc,
+                "perc_resize": args.perc_resize,
+                "device": Config.DEVICE,
+                "data_source": Config.DATA_SOURCE,
+            },
+            dir=run_dir,
+        )
 
     # Pretraining: train on [-1,1] with Tanh output
     transform_img = transforms.Compose([
@@ -58,7 +88,64 @@ def main():
     elif Config.DATA_SOURCE == "cifar100":
         dataset = datasets.CIFAR100(root=Config.CIFAR100_DATA_DIR, train=True, transform=transform_img, download=True)
     else:
-        dataset = datasets.CIFAR100(root=Config.CIFAR100_DATA_DIR, train=True, transform=transform_img, download=True)
+        # Load from local directories (e.g., Pathfinder) using same helper approach as train.py
+        local_dirs = []
+        if hasattr(Config, 'get_local_data_dirs'):
+            try:
+                local_dirs = list(Config.get_local_data_dirs())
+            except Exception:
+                pass
+        if not local_dirs:
+            ld = getattr(Config, 'LOCAL_DATA_DIR', None)
+            if isinstance(ld, str):
+                local_dirs = [ld]
+            elif isinstance(ld, (list, tuple)):
+                local_dirs = list(ld)
+
+        class _SimpleImageDataset(Dataset):
+            def __init__(self, data_dir, transform=None):
+                self.transform = transform
+                self.image_paths = []
+                exts = ['*.jpg','*.jpeg','*.png','*.bmp','*.tiff','*.webp']
+                for ext in exts:
+                    self.image_paths.extend(glob.glob(os.path.join(data_dir, '**', ext), recursive=True))
+                    self.image_paths.extend(glob.glob(os.path.join(data_dir, '**', ext.upper()), recursive=True))
+                self.image_paths = sorted(list(set(self.image_paths)))
+                valid = []
+                for p in self.image_paths:
+                    try:
+                        with Image.open(p) as img:
+                            img.verify()
+                        valid.append(p)
+                    except Exception:
+                        continue
+                self.image_paths = valid
+                print(f"Pretrain: found {len(self.image_paths)} images in {data_dir}")
+            def __len__(self):
+                return len(self.image_paths)
+            def __getitem__(self, idx):
+                p = self.image_paths[idx]
+                try:
+                    img = Image.open(p).convert('RGB')
+                except Exception:
+                    img = Image.new('RGB', (Config.IMG_SIZE[1], Config.IMG_SIZE[0]), color='black')
+                if transform_img:
+                    img = transform_img(img)
+                return img, 0
+
+        local_sets = []
+        for d in local_dirs:
+            if os.path.exists(d):
+                ds = _SimpleImageDataset(d)
+                if len(ds) > 0:
+                    local_sets.append(ds)
+                else:
+                    print(f"Pretrain: directory {d} has no valid images; skipping")
+            else:
+                print(f"Pretrain: directory {d} does not exist; skipping")
+        if not local_sets:
+            raise ValueError(f"No valid local data directories for pretraining: {local_dirs}")
+        dataset = ConcatDataset(local_sets) if len(local_sets) > 1 else local_sets[0]
     if args.single:
         # sample a single random item from dataset
         idx = torch.randint(0, len(dataset), (1,)).item()
@@ -91,7 +178,7 @@ def main():
     lr = getattr(Config, "PRETRAIN_LR", 3e-3)
     opt = torch.optim.Adam(autoenc.parameters(), lr=lr, betas=(0.9, 0.99))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1000, Config.PRETRAIN_STEPS))
-    criterion = PerceptualLoss().to(Config.DEVICE)
+    criterion = None if args.no_perc else PerceptualLoss().to(Config.DEVICE)
     l1_weight = float(getattr(Config, "PRETRAIN_L1_MIX", 5.0))
     l1 = nn.L1Loss(reduction="mean")
 
@@ -111,10 +198,21 @@ def main():
     while steps < max_steps:
         for images, _ in loader:
             images = images.to(Config.DEVICE)
-            pred = autoenc(images)
-            loss_perc = criterion(pred, images)
-            l1_loss = l1(pred, images)
-            loss = loss_perc + l1_weight * l1_loss
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                pred = autoenc(images)
+                # Perceptual loss: optional and optionally on downscaled copies
+                if criterion is not None:
+                    if args.perc_resize is not None and args.perc_resize > 0:
+                        sz = int(args.perc_resize)
+                        imgs_p = F.interpolate(images, size=(sz, sz), mode='bilinear', align_corners=False)
+                        preds_p = F.interpolate(pred, size=(sz, sz), mode='bilinear', align_corners=False)
+                    else:
+                        imgs_p, preds_p = images, pred
+                    loss_perc = criterion(preds_p, imgs_p)
+                else:
+                    loss_perc = 0.0
+                l1_loss = l1(pred, images)
+                loss = (loss_perc if isinstance(loss_perc, torch.Tensor) else torch.tensor(loss_perc, device=images.device)) + l1_weight * l1_loss
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -122,15 +220,23 @@ def main():
             sched.step()
             steps += 1
             if steps % 50 == 0:
-                writer.add_scalar("PretrainAE/loss", loss.item(), steps)
-                writer.add_scalar("PretrainAE/l1_loss", l1_loss.item(), steps)
-                writer.add_scalar("PretrainAE/loss_perc", loss_perc.item(), steps)
+                if wb is not None:
+                    wandb.log({
+                        "pretrain/loss": float(loss.item()),
+                        "pretrain/l1": float(l1_loss.item()),
+                        "pretrain/perc": float(loss_perc if not isinstance(loss_perc, torch.Tensor) else loss_perc.item()),
+                        "lr": float(sched.get_last_lr()[0]),
+                        "images_seen": steps * images.size(0),
+                    }, step=steps)
                 # log last sample only, like main training (orig vs recon)
                 with torch.no_grad():
                     img_last = (images[-1:].detach() + 1.0) / 2.0
                     pred_last = (pred[-1:].detach().clamp(-1, 1) + 1.0) / 2.0
                     grid = vutils.make_grid(torch.cat([img_last, pred_last], dim=0), nrow=2, normalize=True)
-                writer.add_image("PretrainAE/original_vs_reconstruction", grid, steps)
+                if wb is not None:
+                    wandb.log({
+                        "pretrain/orig_vs_recon": [wandb.Image(grid, caption=f"step {steps}")]
+                    }, step=steps)
                 now = time.time()
                 img_per_s = (50 * images.size(0)) / max(1e-6, (now - last_log_t))
                 last_log_t = now
@@ -152,7 +258,12 @@ def main():
         os.makedirs(os.path.dirname(target), exist_ok=True)
         torch.save(autoenc.decoder.state_dict(), target)
         print(f"Exported best decoder to {target}")
-    writer.close()
+        if wb is not None:
+            art = wandb.Artifact("pretrained_decoder", type="model")
+            art.add_file(target)
+            wandb.log_artifact(art)
+    if wb is not None:
+        wandb.finish()
 
 
 if __name__ == "__main__":

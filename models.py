@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 from torchvision import models
 
@@ -86,9 +87,11 @@ class DecoderCNN(nn.Module):
     def forward(self, h):
         """Decode from a flat state vector h -> (B,3,H,W)."""
         # h is flattened features: (B, state_size)
-        B = h.size(0)
         x = self.decoder(h)
         x = self.output_act(x)
+        # Upsample to requested output size if needed
+        if x.shape[-2] != self.out_h or x.shape[-1] != self.out_w:
+            x = F.interpolate(x, size=(self.out_h, self.out_w), mode='bilinear', align_corners=False)
         return x
 
 
@@ -223,11 +226,14 @@ class ImageEncoderForPretrain(nn.Module):
             nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.BatchNorm2d(128), nn.LeakyReLU(inplace=True),
             nn.Conv2d(128, 256, 3, stride=2, padding=1), nn.BatchNorm2d(256), nn.LeakyReLU(inplace=True),
         )
+        # Ensure fixed spatial size before FC for arbitrary input sizes
+        self.adapt_pool = nn.AdaptiveAvgPool2d((4, 4))
         self.flatten = nn.Flatten()
         self.fc = nn.Linear(256 * 4 * 4, state_size)
 
     def forward(self, x):
         x = self.features(x)
+        x = self.adapt_pool(x)
         x = self.flatten(x)
         x = self.fc(x)
         return x
@@ -269,8 +275,8 @@ class PerceptualLoss(nn.Module):
         std = self.std.to(device=y.device, dtype=self.std.dtype)
         x_in = (x - mean) / std
         y_in = (y - mean) / std
-        with torch.amp.autocast('cuda', enabled=False):
-            x_vgg = self.vgg_slice(x_in.float())
-            y_vgg = self.vgg_slice(y_in.float())
-            loss = nn.functional.mse_loss(x_vgg, y_vgg)
+        # Allow outer autocast to control precision for reduced VRAM
+        x_vgg = self.vgg_slice(x_in)
+        y_vgg = self.vgg_slice(y_in)
+        loss = nn.functional.mse_loss(x_vgg, y_vgg)
         return loss

@@ -1,31 +1,31 @@
 class Config:
-    # Larger backbone and image while keeping compute reasonable
-    IMG_SIZE = (32, 32)               
-    FOVEA_OUTPUT_SIZE = (12, 12)        # Higher res
-    FOVEA_CROP_SIZE = (6, 6)          
+    # Scale for ~300x300 Pathfinder images
+    IMG_SIZE = (300, 300)               # downscale slightly from 300 for divisible sizes
+    FOVEA_OUTPUT_SIZE = (24, 24)        # higher encoder input res
+    FOVEA_CROP_SIZE = (24, 24)          # base crop; multi-scale uses 24,48,96
     EPOCHS = 200
 
     # Training
     LEARNING_RATE = 3e-4        # LOWER THE LR BEFORE CONTINUING A RL TRAINING RUN!!!!!!!!!!!!!!!!!!!!!!!!!!!
     WEIGHT_DECAY = 1e-4
     GRAD_CLIP_NORM = 1.0
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
 
     # Model dims
-    HIDDEN_SIZE = 2048               # Larger LSTM hidden size
-    ENCODER_C1 = 48                  # Wider encoder
-    ENCODER_C2 = 96
-    ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4
+    HIDDEN_SIZE = 2048               # reasonable state for larger images
+    ENCODER_C1 = 64                  # Wider encoder
+    ENCODER_C2 = 128
+    ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # due to AdaptivePool 2x2
     POS_ENCODING_DIM = 64
     LSTM_LAYERS = 2
 
     # Multi-scale glimpse
     K_SCALES = 3
-    FUSION_TO_DIM = 512          # Larger fusion MLP
+    FUSION_TO_DIM = 512          # fusion dimension
     FUSION_HIDDEN_MUL = 2.0
 
     # Decoder
-    DECODER_LATENT_CH = 192        # Larger decoder capacity
+    DECODER_LATENT_CH = 192        # decoder capacity
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     # Data
@@ -38,8 +38,8 @@ class Config:
     CIFAR100_DATA_DIR = "./Data/cifar100"
 
     # Rollout
-    MAX_STEPS = 20
-    MAX_MOVE = 0.2
+    MAX_STEPS = 24
+    MAX_MOVE = 0.1                 # smaller normalized moves at higher res
     USE_GAZE_BOUNDS = True
     GAZE_BOUND_FRACTION = 0.1
 
@@ -57,8 +57,8 @@ class Config:
 
     # Pretrained artifacts
     PRETRAIN_STEPS = 40000
-    PRETRAIN_LR = 3e-3
-    PRETRAIN_BATCH_SIZE = 32
+    PRETRAIN_LR = 2e-3
+    PRETRAIN_BATCH_SIZE = 16        # larger images -> smaller batch
     FREEZE_DECODER_EPOCHS = 1
     PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_L.pth"
     PRETRAIN_L1_WEIGHT = 1.0
@@ -67,8 +67,8 @@ class Config:
 
     PRETRAINED_MODEL_PATH = "./PastRuns/precep_9M.pth"
 
-    # Data source
-    DATA_SOURCE = "cifar100"
+    # Data source (use local Pathfinder dirs)
+    DATA_SOURCE = "local"
 
     # RL
     RL_GAMMA = 0.95

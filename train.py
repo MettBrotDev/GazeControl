@@ -10,8 +10,11 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, ConcatDataset, Dataset
 from torchvision import datasets, transforms
-from torch.utils.tensorboard import SummaryWriter
 import torchvision.utils as vutils
+try:
+    import wandb
+except Exception:
+    wandb = None
 import datetime
 import numpy as np
 import glob
@@ -118,13 +121,13 @@ def eight_dir_deltas(max_move: float, device: str):
     return dirs * max_move
 
 
-def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False):
+def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=None):
     # timestamped run directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_name = f"gaze_control_{Config.DATA_SOURCE}_rl_{timestamp}"
     run_dir = os.path.join("runs", log_name)
     os.makedirs(run_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=run_dir)  # Initialize tensorboard writer
+    # TensorBoard disabled; use W&B if provided
     
     # Track images seen and checkpoint frequency
     imgs_seen = 0
@@ -463,13 +466,16 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False):
                 entropy_coef = float(getattr(Config, 'RL_ENTROPY_COEF', 0.01))
                 rl_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
 
-                # Log RL metrics
-                writer.add_scalar("RL/policy_loss", policy_loss.item(), global_step)
-                writer.add_scalar("RL/value_loss", value_loss.item(), global_step)
-                writer.add_scalar("RL/entropy", (-entropy_loss).item(), global_step)
-                writer.add_scalar("RL/mean_reward_raw", rewards_t_raw.mean().item(), global_step)
-                writer.add_scalar("RL/mean_reward_scaled", rewards_t.mean().item(), global_step)
-                writer.add_scalar("RL/mean_advantage", advantages.mean().item(), global_step)
+                # Log RL metrics via W&B
+                if wb is not None:
+                    wandb.log({
+                        "RL/policy_loss": float(policy_loss.item()),
+                        "RL/value_loss": float(value_loss.item()),
+                        "RL/entropy": float((-entropy_loss).item()),
+                        "RL/mean_reward_raw": float(rewards_t_raw.mean().item()),
+                        "RL/mean_reward_scaled": float(rewards_t.mean().item()),
+                        "RL/mean_advantage": float(advantages.mean().item()),
+                    }, step=global_step)
 
             total_loss = total_loss + float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0)) * rl_loss
 
@@ -498,13 +504,17 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False):
                 print(f"Checkpoint saved at {imgs_seen} images -> {ckpt_path}")
                 next_save_at += 50000
 
-            # log reconstruction loss
+            # log reconstruction loss via W&B
             rec_loss_unscaled = Config.MSE_WEIGHT * final_mse + Config.L1_WEIGHT * final_l1
-            writer.add_scalar("Loss/rec_loss", rec_loss_unscaled.item(), global_step)       # log the unscaled final-step reconstruction loss
-            if final_perc is not None:
-                writer.add_scalar("Loss/final_perc", final_perc.item(), global_step)
-            writer.add_scalar("Loss/total_loss", total_loss.item(), global_step)
-            writer.add_scalar("Episode/steps", Config.MAX_STEPS, global_step)
+            if wb is not None:
+                logs = {
+                    "loss/rec": float(rec_loss_unscaled.item()),
+                    "loss/total": float(total_loss.item()),
+                    "episode/steps": int(Config.MAX_STEPS),
+                }
+                if final_perc is not None:
+                    logs["loss/perc"] = float(final_perc.item())
+                wandb.log(logs, step=global_step)
 
             # Occasionally log a synchronized figure: Original+GazePath vs Reconstruction (every 10 batches)
             if batch_idx % 10 == 0:
@@ -529,7 +539,11 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False):
                     axs[1].set_title('Reconstruction (final step)')
                     axs[1].axis('off')
                     plt.tight_layout()
-                    writer.add_figure("Episode/original+gaze_vs_reconstruction", fig, global_step)
+                    if wb is not None:
+                        try:
+                            wandb.log({"train/original_gaze_vs_recon": wandb.Image(fig)}, step=global_step)
+                        except Exception:
+                            pass
                     plt.close(fig)
                 except Exception:
                     pass
@@ -541,7 +555,7 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False):
         model_path = os.path.join("gaze_control_model_local.pth")
         torch.save(model.state_dict(), model_path)
         print(f"Epoch {epoch} complete. Model saved to {model_path}")
-    writer.close()
+    # No TensorBoard writer to close
 
 class SimpleImageDataset(Dataset):
     def __init__(self, data_dir, transform=None):
@@ -602,6 +616,10 @@ if __name__ == "__main__":
                         help='Load full model from Config.PRETRAINED_MODEL_PATH before training')
     parser.add_argument('--no-rl', action='store_true', 
                         help='Disable RL actor/critic; sample random actions from the discrete action space')
+    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
+    parser.add_argument('--wandb-project', type=str, default='GazeControl', help='W&B project name')
+    parser.add_argument('--wandb-entity', type=str, default=None, help='W&B entity/team')
+    parser.add_argument('--wandb-run-name', type=str, default=None, help='W&B run name')
     args = parser.parse_args()
 
     # Dynamically load config module and rebind Config used in this module
@@ -619,6 +637,27 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+    wb_run = None
+    if args.wandb and wandb is not None:
+        wb_run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_run_name,
+            config={
+                "img_size": Config.IMG_SIZE,
+                "batch_size": Config.BATCH_SIZE,
+                "lr": Config.LEARNING_RATE,
+                "device": Config.DEVICE,
+                "data_source": Config.DATA_SOURCE,
+                "k_scales": getattr(Config, 'K_SCALES', 3),
+                "fovea": Config.FOVEA_OUTPUT_SIZE,
+            }
+        )
+
     if args.no_rl:
         print("RL disabled (--no_rl): using uniform random actions from the discrete space.")
-    train(use_pretrained_decoder=args.use_pretrained, load_full_model=args.load_full, no_rl=args.no_rl)
+    try:
+        train(use_pretrained_decoder=args.use_pretrained, load_full_model=args.load_full, no_rl=args.no_rl, wb=wb_run)
+    finally:
+        if wb_run is not None:
+            wandb.finish()

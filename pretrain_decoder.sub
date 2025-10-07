@@ -1,0 +1,38 @@
+# Submit from the repository root: condor_submit pretrain_decoder.sub
+# Customize macros below to your environment. If using a virtualenv/conda, set ENV_ACTIVATE to its activate script path.
+BASE_DIR                = .
+CONFIG_MODULE           = configL
+
+WANDB_PROJECT           = GazeControl
+WANDB_ENTITY            = 
+WANDB_MODE              = online
+WANDB_API_KEY           = 
+RUN_NAME                = pretrain_$(Cluster).$(Process)
+ENV_ACTIVATE            = .venv/bin/activate
+
+# Pretraining run knobs
+PRETRAIN_BATCH          = 16
+STEPS                   = 100000
+# Flags are strings; leave empty "" to disable.
+NO_PERC_FLAG            = 
+PERC_RESIZE_FLAG        = 
+SINGLE_FLAG             = 
+EXTRA_ARGS              = 
+
+universe                = vanilla
+executable              = /bin/bash
+initialdir              = $(BASE_DIR)
+arguments               = -lc "source ~/.bashrc; if [ -f \"$ENV_ACTIVATE\" ]; then source \"$ENV_ACTIVATE\"; fi; export WANDB_API_KEY=$(WANDB_API_KEY); export WANDB_MODE=$(WANDB_MODE); python pretrain_decoder.py --config_module $(CONFIG_MODULE) --batch-size $(PRETRAIN_BATCH) --steps $(STEPS) $(NO_PERC_FLAG) $(PERC_RESIZE_FLAG) $(SINGLE_FLAG) --wandb --wandb-project $(WANDB_PROJECT) --wandb-entity $(WANDB_ENTITY) --wandb-run-name $(RUN_NAME) $(EXTRA_ARGS)"
+log                     = condor_logs/pretrain.$(Cluster).$(Process).log
+output                  = condor_logs/pretrain.$(Cluster).$(Process).out
+error                   = condor_logs/pretrain.$(Cluster).$(Process).err
+request_gpus            = 1
+request_cpus            = 4
+request_memory          = 8 GB
+getenv                  = True
+requirements            = (CUDADeviceName =!= UNDEFINED)
+
+# Pass through environment variables for W&B and environment activation
+environment             = "WANDB_API_KEY=$(WANDB_API_KEY); WANDB_MODE=$(WANDB_MODE); WANDB_PROJECT=$(WANDB_PROJECT); WANDB_ENTITY=$(WANDB_ENTITY); RUN_NAME=$(RUN_NAME); ENV_ACTIVATE=$(ENV_ACTIVATE)"
+
+queue 1

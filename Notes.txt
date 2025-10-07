@@ -28,3 +28,10 @@ Important bits that might help me:
 I feel like the glimpse parameters might be too low right now (6x6 isnt that much compared to the 16x16 it got before)
 
 
+
+Use PPO
+
+Move to pathfinder
+
+Use actual RL task (on either cifar or pathfinder)
+
