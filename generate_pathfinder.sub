@@ -10,7 +10,7 @@ DATADIR                 = Data/Pathfinder
 
 # Parallelization controls
 NUM_MACHINES            = 8
-TOTAL_IMAGES            = 2000
+TOTAL_IMAGES            = 80000
 
 universe                = vanilla
 executable              = $(PYTHON)
