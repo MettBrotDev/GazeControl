@@ -12,7 +12,7 @@ RUN_NAME                = pretrain_$(Cluster).$(Process)
 PYTHON                  = .venv/bin/python
 
 # Pretraining run knobs
-PRETRAIN_BATCH          = 128
+PRETRAIN_BATCH          = 64
 STEPS                   = 300000
 # Optional flags: set to e.g. "--no-perc" or leave empty
 NO_PERC_FLAG            = 
