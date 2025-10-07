@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=None, help="Override Config.PRETRAIN_BATCH_SIZE for pretraining")
     parser.add_argument("--no-perc", action="store_true", help="Disable perceptual loss during pretraining to save VRAM")
     parser.add_argument("--perc-resize", type=int, default=None, help="Resize to this square size before perceptual loss (e.g., 224)")
+    parser.add_argument("--perceptual-weight", type=float, default=None, help="Scale factor for perceptual loss; overrides Config.PRETRAIN_PERC_WEIGHT")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
@@ -64,7 +65,9 @@ def main():
                 "lr": float(getattr(Config, "PRETRAIN_LR", 3e-3)),
                 "perc": not args.no_perc,
                 "perc_resize": args.perc_resize,
-                "perc_weight": float(args.perceptual_weight) if args.perceptual_weight is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0)),
+                "perc_weight": (float(getattr(args, "perceptual_weight", None))
+                                  if getattr(args, "perceptual_weight", None) is not None
+                                  else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))),
                 "device": Config.DEVICE,
                 "data_source": Config.DATA_SOURCE,
             },
@@ -182,7 +185,8 @@ def main():
     criterion = None if args.no_perc else PerceptualLoss().to(Config.DEVICE)
     # Backward-compat: accept either PRETRAIN_L1_WEIGHT (preferred) or fallback to PRETRAIN_L1_MIX
     l1_weight = float(getattr(Config, "PRETRAIN_L1_WEIGHT", getattr(Config, "PRETRAIN_L1_MIX", 5.0)))
-    perc_weight = float(args.perceptual_weight) if args.perceptual_weight is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))
+    _perc_cli = getattr(args, "perceptual_weight", None)
+    perc_weight = float(_perc_cli) if _perc_cli is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))
     l1 = nn.L1Loss(reduction="mean")
 
     def total_variation(x):

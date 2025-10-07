@@ -3,7 +3,7 @@ BASE_DIR                = .
 CONFIG_MODULE           = configL
 
 WANDB_PROJECT           = GazeControl
-WANDB_ENTITY            = 
+WANDB_ENTITY            = GazeControl
 WANDB_MODE              = online
 WANDB_API_KEY           = 
 RUN_NAME                = pretrain_$(Cluster).$(Process)
@@ -26,8 +26,8 @@ executable              = $(PYTHON)
 initialdir              = $(BASE_DIR)
 arguments               = pretrain_decoder.py --config_module $(CONFIG_MODULE) --batch-size $(PRETRAIN_BATCH) --steps $(STEPS) $(NO_PERC_FLAG) $(PERC_RESIZE_FLAG) $(PERC_WEIGHT_FLAG) $(SINGLE_FLAG) --wandb --wandb-project $(WANDB_PROJECT) --wandb-entity $(WANDB_ENTITY) --wandb-run-name $(RUN_NAME) $(EXTRA_ARGS)
 log                     = condor_logs/pretrain.$(Cluster).$(Process).log
-output                  = condor_logs/pretrain.$(Cluster).$(Process).out
-error                   = condor_logs/pretrain.$(Cluster).$(Process).err
+output                  = condor_logs/pretrain.$(Cluster).$(Process).out.log
+error                   = condor_logs/pretrain.$(Cluster).$(Process).err.log
 request_gpus            = 1
 request_cpus            = 4
 request_memory          = 8 GB
@@ -40,6 +40,6 @@ require_gpus = Capability >= 8.0
 # Optional: route temporary files and pip cache to data/scratch to avoid HOME quota
 TMPDIR                  = 
 PIP_CACHE_DIR           = 
-environment             = "WANDB_API_KEY=$(WANDB_API_KEY); WANDB_MODE=$(WANDB_MODE); WANDB_PROJECT=$(WANDB_PROJECT); WANDB_ENTITY=$(WANDB_ENTITY); RUN_NAME=$(RUN_NAME); TMPDIR=$(TMPDIR); PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
+environment             = "WANDB_API_KEY=$(WANDB_API_KEY) WANDB_MODE=$(WANDB_MODE) WANDB_PROJECT=$(WANDB_PROJECT) WANDB_ENTITY=$(WANDB_ENTITY) RUN_NAME=$(RUN_NAME) TMPDIR=$(TMPDIR) PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
 
 queue 1

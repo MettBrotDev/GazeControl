@@ -3,7 +3,7 @@ BASE_DIR                = .
 CONFIG_MODULE           = configL
 
 WANDB_PROJECT           = GazeControl
-WANDB_ENTITY            = 
+WANDB_ENTITY            = GazeControl
 WANDB_MODE              = online
 WANDB_API_KEY           = 
 RUN_NAME                = train_$(Cluster).$(Process)
@@ -22,8 +22,8 @@ executable              = $(PYTHON)
 initialdir              = $(BASE_DIR)
 arguments               = train.py --config $(CONFIG_MODULE) $(USE_PRETRAINED_FLAG) $(LOAD_FULL_FLAG) $(NO_RL_FLAG) --wandb --wandb-project $(WANDB_PROJECT) --wandb-entity $(WANDB_ENTITY) --wandb-run-name $(RUN_NAME) $(EXTRA_ARGS)
 log                     = condor_logs/train.$(Cluster).$(Process).log
-output                  = condor_logs/train.$(Cluster).$(Process).out
-error                   = condor_logs/train.$(Cluster).$(Process).err
+output                  = condor_logs/train.$(Cluster).$(Process).out.log
+error                   = condor_logs/train.$(Cluster).$(Process).err.log
 request_gpus            = 1
 request_cpus            = 6
 request_memory          = 12 GB
@@ -35,6 +35,6 @@ requirements            = (CUDADeviceName =!= UNDEFINED)
 # Optional: route temporary files and pip cache to data/scratch to avoid HOME quota
 TMPDIR                  = 
 PIP_CACHE_DIR           = 
-environment             = "WANDB_API_KEY=$(WANDB_API_KEY); WANDB_MODE=$(WANDB_MODE); WANDB_PROJECT=$(WANDB_PROJECT); WANDB_ENTITY=$(WANDB_ENTITY); RUN_NAME=$(RUN_NAME); TMPDIR=$(TMPDIR); PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
+environment             = "WANDB_API_KEY=$(WANDB_API_KEY) WANDB_MODE=$(WANDB_MODE) WANDB_PROJECT=$(WANDB_PROJECT) WANDB_ENTITY=$(WANDB_ENTITY) RUN_NAME=$(RUN_NAME) TMPDIR=$(TMPDIR) PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
 
 queue 1
