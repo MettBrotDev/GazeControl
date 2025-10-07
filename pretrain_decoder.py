@@ -64,6 +64,7 @@ def main():
                 "lr": float(getattr(Config, "PRETRAIN_LR", 3e-3)),
                 "perc": not args.no_perc,
                 "perc_resize": args.perc_resize,
+                "perc_weight": float(args.perceptual_weight) if args.perceptual_weight is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0)),
                 "device": Config.DEVICE,
                 "data_source": Config.DATA_SOURCE,
             },
@@ -179,7 +180,9 @@ def main():
     opt = torch.optim.Adam(autoenc.parameters(), lr=lr, betas=(0.9, 0.99))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1000, Config.PRETRAIN_STEPS))
     criterion = None if args.no_perc else PerceptualLoss().to(Config.DEVICE)
-    l1_weight = float(getattr(Config, "PRETRAIN_L1_MIX", 5.0))
+    # Backward-compat: accept either PRETRAIN_L1_WEIGHT (preferred) or fallback to PRETRAIN_L1_MIX
+    l1_weight = float(getattr(Config, "PRETRAIN_L1_WEIGHT", getattr(Config, "PRETRAIN_L1_MIX", 5.0)))
+    perc_weight = float(args.perceptual_weight) if args.perceptual_weight is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))
     l1 = nn.L1Loss(reduction="mean")
 
     def total_variation(x):
@@ -212,7 +215,11 @@ def main():
                 else:
                     loss_perc = 0.0
                 l1_loss = l1(pred, images)
-                loss = (loss_perc if isinstance(loss_perc, torch.Tensor) else torch.tensor(loss_perc, device=images.device)) + l1_weight * l1_loss
+                # Scale perceptual component by perc_weight
+                if isinstance(loss_perc, torch.Tensor):
+                    loss = perc_weight * loss_perc + l1_weight * l1_loss
+                else:
+                    loss = l1_weight * l1_loss
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -225,6 +232,8 @@ def main():
                         "pretrain/loss": float(loss.item()),
                         "pretrain/l1": float(l1_loss.item()),
                         "pretrain/perc": float(loss_perc if not isinstance(loss_perc, torch.Tensor) else loss_perc.item()),
+                        "pretrain/perc_weight": perc_weight,
+                        "pretrain/l1_weight": l1_weight,
                         "lr": float(sched.get_last_lr()[0]),
                         "images_seen": steps * images.size(0),
                     }, step=steps)

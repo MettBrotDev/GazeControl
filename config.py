@@ -60,6 +60,8 @@ class Config:
     PRETRAIN_L1_WEIGHT = 1.0        # Try L1-only for extra sharpness
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True         # Mixed precision for faster/more stable pretraining
+    # Perceptual loss weight used only during decoder pretraining
+    PRETRAIN_PERC_WEIGHT = 0.005
 
     # Full-model checkpoint (e.g., a "random move" trained model)
     # If set to a valid path, training will load this entire state_dict first (strict=False),
