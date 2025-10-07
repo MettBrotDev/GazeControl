@@ -15,7 +15,7 @@ TOTAL_IMAGES            = 80000
 universe                = vanilla
 executable              = /bin/bash
 initialdir              = $(BASE_DIR)
-arguments               = -lc "source ~/.bashrc; if [ -f \"$ENV_ACTIVATE\" ]; then source \"$ENV_ACTIVATE\"; fi; mkdir -p \"$(DATADIR)\"; python $(SCRIPT) $(NUM_MACHINES) $(Process) $(TOTAL_IMAGES) \"$(DATADIR)\""
+arguments               = -lc 'source ~/.bashrc; if [ -f "$(ENV_ACTIVATE)" ]; then source "$(ENV_ACTIVATE)"; fi; mkdir -p "$(DATADIR)"; python $(SCRIPT) $(NUM_MACHINES) $(Process) $(TOTAL_IMAGES) "$(DATADIR)"'
 log                     = condor_logs/pfgen.$(Cluster).$(Process).log
 output                  = condor_logs/pfgen.$(Cluster).$(Process).out
 error                   = condor_logs/pfgen.$(Cluster).$(Process).err
@@ -25,5 +25,10 @@ request_disk            = 2 GB
 getenv                  = True
 stream_output           = True
 stream_error            = True
+
+# Optional: route temporary files and pip cache to data to avoid HOME quota
+TMPDIR                  = 
+PIP_CACHE_DIR           = 
+environment             = "ENV_ACTIVATE=$(ENV_ACTIVATE); DATADIR=$(DATADIR); TMPDIR=$(TMPDIR); PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
 
 queue $(NUM_MACHINES)
