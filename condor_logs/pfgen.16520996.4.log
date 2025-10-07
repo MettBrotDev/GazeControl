@@ -1,0 +1,26 @@
+000 (16520996.004.000) 2025-10-07 11:57:22 Job submitted from host: <10.15.2.1:9618?PrivAddr=%3c172.22.0.101:9618%3fsock%3dschedd_29375_629a%3e&PrivNet=internal.cluster.is.localnet&addrs=10.15.2.1-9618&alias=sched.cluster.is.localnet&noUDP&sock=schedd_29375_629a>
+...
+001 (16520996.004.000) 2025-10-07 11:57:37 Job executing on host: <172.22.2.105:9618?addrs=172.22.2.105-9618&alias=g105.internal.cluster.is.localnet&noUDP&sock=startd_5216_5214>
+...
+006 (16520996.004.000) 2025-10-07 11:57:39 Image size of job updated: 7500
+	0  -  MemoryUsage of job (MB)
+	0  -  ResidentSetSize of job (KB)
+...
+005 (16520996.004.000) 2025-10-07 11:57:39 Job terminated.
+	(1) Normal termination (return value 2)
+		Usr 0 00:00:00, Sys 0 00:00:00  -  Run Remote Usage
+		Usr 0 00:00:00, Sys 0 00:00:00  -  Run Local Usage
+		Usr 0 00:00:00, Sys 0 00:00:00  -  Total Remote Usage
+		Usr 0 00:00:00, Sys 0 00:00:00  -  Total Local Usage
+	0  -  Run Bytes Sent By Job
+	0  -  Run Bytes Received By Job
+	0  -  Total Bytes Sent By Job
+	0  -  Total Bytes Received By Job
+	Partitionable Resources :    Usage  Request Allocated 
+	   Cpus                 :                 2         2 
+	   Disk (KB)            :     7500  2097152   5784199 
+	   GPUs                 :                           0 
+	   Memory (MB)          :        0     4096      4096 
+
+	Job terminated of its own accord at 2025-10-07T09:57:39Z with exit-code 2.
+...
