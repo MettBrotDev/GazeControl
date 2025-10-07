@@ -35,6 +35,6 @@ requirements            = (CUDADeviceName =!= UNDEFINED)
 # Optional: route temporary files and pip cache to data/scratch to avoid HOME quota
 TMPDIR                  = 
 PIP_CACHE_DIR           = 
-environment             = "WANDB_API_KEY=$(WANDB_API_KEY) WANDB_MODE=$(WANDB_MODE) WANDB_PROJECT=$(WANDB_PROJECT) WANDB_ENTITY=$(WANDB_ENTITY) RUN_NAME=$(RUN_NAME) TMPDIR=$(TMPDIR) PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
+environment             = "WANDB_MODE=$(WANDB_MODE) WANDB_PROJECT=$(WANDB_PROJECT) WANDB_ENTITY=$(WANDB_ENTITY) RUN_NAME=$(RUN_NAME) TMPDIR=$(TMPDIR) PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
 
 queue 1

@@ -55,6 +55,21 @@ def main():
     # TensorBoard disabled; use W&B if enabled
     wb = None
     if args.wandb and wandb is not None:
+        # Attempt explicit login using environment API key to avoid no-tty prompts on clusters
+        try:
+            _api_key = os.environ.get("WANDB_API_KEY", None)
+            if _api_key:
+                try:
+                    wandb.login(key=_api_key)
+                    print("W&B: logged in via WANDB_API_KEY from environment")
+                except Exception as e:
+                    print(f"W&B: login via env key failed: {e}")
+            else:
+                # If no API key and not offline, W&B may attempt an interactive prompt and fail on clusters
+                if os.environ.get("WANDB_MODE", "").lower() not in {"offline", "disabled", "dryrun"}:
+                    print("W&B: WANDB_API_KEY is not set and WANDB_MODE is not offline; if this is a non-interactive job, set WANDB_MODE=offline or export WANDB_API_KEY.")
+        except Exception:
+            pass
         wb = wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,

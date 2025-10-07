@@ -35,3 +35,7 @@ Move to pathfinder
 
 Use actual RL task (on either cifar or pathfinder)
 
+
+ssh login.cluster.is.localnet
+
+export WANDB_API_KEY=KEY
