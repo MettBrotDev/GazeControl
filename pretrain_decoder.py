@@ -29,6 +29,10 @@ def main():
     parser.add_argument("--no-perc", action="store_true", help="Disable perceptual loss during pretraining to save VRAM")
     parser.add_argument("--perc-resize", type=int, default=None, help="Resize to this square size before perceptual loss (e.g., 224)")
     parser.add_argument("--perceptual-weight", type=float, default=None, help="Scale factor for perceptual loss; overrides Config.PRETRAIN_PERC_WEIGHT")
+    parser.add_argument("--l1-weight", type=float, default=None, help="Override Config.PRETRAIN_L1_WEIGHT")
+    parser.add_argument("--fg-mask", action="store_true", help="Foreground-weight L1 using brightness of target; reduces all-black collapse")
+    parser.add_argument("--fg-thresh", type=float, default=0.1, help="Brightness threshold in [0,1] for foreground mask (default 0.1)")
+    parser.add_argument("--bg-weight", type=float, default=0.1, help="Relative weight for background pixels when --fg-mask is enabled (default 0.1)")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
@@ -203,10 +207,10 @@ def main():
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1000, Config.PRETRAIN_STEPS))
     criterion = None if args.no_perc else PerceptualLoss().to(Config.DEVICE)
     # Backward-compat: accept either PRETRAIN_L1_WEIGHT (preferred) or fallback to PRETRAIN_L1_MIX
-    l1_weight = float(getattr(Config, "PRETRAIN_L1_WEIGHT", getattr(Config, "PRETRAIN_L1_MIX", 5.0)))
+    l1_weight = float(args.l1_weight) if args.l1_weight is not None else float(getattr(Config, "PRETRAIN_L1_WEIGHT", getattr(Config, "PRETRAIN_L1_MIX", 5.0)))
     _perc_cli = getattr(args, "perceptual_weight", None)
     perc_weight = float(_perc_cli) if _perc_cli is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))
-    l1 = nn.L1Loss(reduction="mean")
+    l1 = nn.MSELoss(reduction="mean")
 
     def total_variation(x):
         tv_h = (x[:, :, 1:, :] - x[:, :, :-1, :]).abs().mean()
@@ -237,7 +241,16 @@ def main():
                     loss_perc = criterion(preds_p, imgs_p)
                 else:
                     loss_perc = 0.0
-                l1_loss = l1(pred, images)
+                if args.fg_mask:
+                    # Luminance in [-1,1] space converted to [0,1]
+                    img_y = (images.clamp(-1.0,1.0) + 1.0) * 0.5
+                    img_y = (0.2989 * img_y[:,0:1] + 0.5870 * img_y[:,1:2] + 0.1140 * img_y[:,2:3])
+                    pred_y = (pred.clamp(-1.0,1.0) + 1.0) * 0.5
+                    pred_y = (0.2989 * pred_y[:,0:1] + 0.5870 * pred_y[:,1:2] + 0.1140 * pred_y[:,2:3])
+                    w = torch.where(img_y >= args.fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, args.bg_weight))
+                    l1_loss = (w * (pred_y - img_y).abs()).mean()
+                else:
+                    l1_loss = l1(pred, images)
                 # Scale perceptual component by perc_weight
                 if isinstance(loss_perc, torch.Tensor):
                     loss = perc_weight * loss_perc + l1_weight * l1_loss
@@ -267,7 +280,7 @@ def main():
                     grid = vutils.make_grid(torch.cat([img_last, pred_last], dim=0), nrow=2, normalize=True)
                 if wb is not None:
                     wandb.log({
-                        "pretrain/orig_vs_recon": [wandb.Image(grid, caption=f"step {steps}")]
+                        "pretrain/orig_vs_recon": [wandb.Image(grid, caption=f"step {steps}")],
                     }, step=steps)
                 now = time.time()
                 img_per_s = (50 * images.size(0)) / max(1e-6, (now - last_log_t))
