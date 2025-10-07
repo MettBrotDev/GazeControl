@@ -185,6 +185,18 @@ def main():
                                   decoder_latent_ch=Config.DECODER_LATENT_CH,
                                   out_activation="tanh").to(Config.DEVICE)
 
+    # Lightweight summary: parameter counts and a dry-run forward for shape sanity
+    def _count_params(m: nn.Module):
+        return sum(p.numel() for p in m.parameters() if p.requires_grad)
+    enc_params = _count_params(autoenc.encoder)
+    dec_params = _count_params(autoenc.decoder)
+    tot_params = _count_params(autoenc)
+    print(f"Encoder params: {enc_params/1e6:.2f}M | Decoder params: {dec_params/1e6:.2f}M | Total: {tot_params/1e6:.2f}M")
+    with torch.no_grad():
+        test_in = torch.zeros(1, 3, Config.IMG_SIZE[0], Config.IMG_SIZE[1], device=Config.DEVICE)
+        test_out = autoenc(test_in)
+        print(f"Sanity forward: input {tuple(test_in.shape)} -> output {tuple(test_out.shape)}")
+
     # Optimizer + scheduler + loss (L1-dominant)
     lr = getattr(Config, "PRETRAIN_LR", 3e-3)
     opt = torch.optim.Adam(autoenc.parameters(), lr=lr, betas=(0.9, 0.99))

@@ -60,23 +60,35 @@ class Encoder(nn.Module):
 
 
 class DecoderCNN(nn.Module):
-    """Simple CNN decoder that takes flattened features and outputs an image.
-    Uses latent_ch for the spatial feature channels so capacity can be tuned from config.
+    """Simple, modest-capacity decoder for up to ~300x300 outputs.
+    Upsamples to 64x64 with four transposed-conv stages, then bilinear-resizes to the final size.
+    Channel widths scale with latent_ch but remain small.
     """
-    def __init__(self, state_size: int, out_size=(32, 32), latent_ch: int = 48, out_activation: str = "sigmoid"):
+    def __init__(self, state_size: int, out_size=(32, 32), latent_ch: int = 96, out_activation: str = "sigmoid"):
         super().__init__()
         self.out_h, self.out_w = out_size
 
+        c1 = int(latent_ch)
+        c2 = max(16, c1 // 2)
+        c3 = max(16, c2 // 2)
+        c4 = max(8, c3 // 2)
+
         self.decoder = nn.Sequential(
             nn.Linear(state_size, 256 * 4 * 4),
-            nn.Unflatten(1, (256, 4, 4)),
-            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Unflatten(1, (256, 4, 4)),            # 4x4
+            nn.ConvTranspose2d(256, c1, 4, stride=2, padding=1),  # 8x8
+            nn.BatchNorm2d(c1),
             nn.LeakyReLU(inplace=True),
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
+            nn.ConvTranspose2d(c1, c2, 4, stride=2, padding=1),   # 16x16
+            nn.BatchNorm2d(c2),
             nn.LeakyReLU(inplace=True),
-            nn.ConvTranspose2d(64, 3, 4, stride=2, padding=1),
+            nn.ConvTranspose2d(c2, c3, 4, stride=2, padding=1),   # 32x32
+            nn.BatchNorm2d(c3),
+            nn.LeakyReLU(inplace=True),
+            nn.ConvTranspose2d(c3, c4, 4, stride=2, padding=1),   # 64x64
+            nn.BatchNorm2d(c4),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv2d(c4, 3, kernel_size=3, padding=1),           # 64x64 -> RGB
         )
 
         if out_activation == "tanh":
@@ -85,11 +97,8 @@ class DecoderCNN(nn.Module):
             self.output_act = nn.Sigmoid()
 
     def forward(self, h):
-        """Decode from a flat state vector h -> (B,3,H,W)."""
-        # h is flattened features: (B, state_size)
         x = self.decoder(h)
         x = self.output_act(x)
-        # Upsample to requested output size if needed
         if x.shape[-2] != self.out_h or x.shape[-1] != self.out_w:
             x = F.interpolate(x, size=(self.out_h, self.out_w), mode='bilinear', align_corners=False)
         return x
@@ -218,18 +227,22 @@ class Agent(nn.Module):
 
 
 class ImageEncoderForPretrain(nn.Module):
-    """User-provided encoder: Conv+BN+ReLU with stride-2 downsamples to 4x4, then FC to state_size."""
+    """Slightly stronger AE encoder: 3 strided downsamples + 1 extra 3x3 conv.
+    Keeps compute modest while capturing thin structures better.
+    """
     def __init__(self, state_size: int, img_size=(32, 32)):
         super().__init__()
+        c1, c2, c3 = 96, 192, 256
         self.features = nn.Sequential(
-            nn.Conv2d(3, 64, 3, stride=2, padding=1), nn.BatchNorm2d(64), nn.LeakyReLU(inplace=True),
-            nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.BatchNorm2d(128), nn.LeakyReLU(inplace=True),
-            nn.Conv2d(128, 256, 3, stride=2, padding=1), nn.BatchNorm2d(256), nn.LeakyReLU(inplace=True),
+            nn.Conv2d(3, c1, 3, stride=2, padding=1), nn.BatchNorm2d(c1), nn.GELU(),
+            nn.Conv2d(c1, c2, 3, stride=2, padding=1), nn.BatchNorm2d(c2), nn.GELU(),
+            nn.Conv2d(c2, c3, 3, stride=2, padding=1), nn.BatchNorm2d(c3), nn.GELU(),
+            nn.Conv2d(c3, c3, 3, stride=1, padding=1), nn.BatchNorm2d(c3), nn.GELU(),
         )
-        # Ensure fixed spatial size before FC for arbitrary input sizes
+        # Fixed spatial size before FC for arbitrary input sizes
         self.adapt_pool = nn.AdaptiveAvgPool2d((4, 4))
         self.flatten = nn.Flatten()
-        self.fc = nn.Linear(256 * 4 * 4, state_size)
+        self.fc = nn.Linear(c3 * 4 * 4, state_size)
 
     def forward(self, x):
         x = self.features(x)
@@ -270,11 +283,13 @@ class PerceptualLoss(nn.Module):
 
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        # Inputs are in [-1,1]; convert to [0,1] then normalize for VGG
+        # Inputs expected in [-1,1]; convert to [0,1] then normalize for VGG
         mean = self.mean.to(device=x.device, dtype=self.mean.dtype)
         std = self.std.to(device=y.device, dtype=self.std.dtype)
-        x_in = (x - mean) / std
-        y_in = (y - mean) / std
+        x01 = (x.clamp(-1.0, 1.0) + 1.0) * 0.5
+        y01 = (y.clamp(-1.0, 1.0) + 1.0) * 0.5
+        x_in = (x01 - mean) / std
+        y_in = (y01 - mean) / std
         # Allow outer autocast to control precision for reduced VRAM
         x_vgg = self.vgg_slice(x_in)
         y_vgg = self.vgg_slice(y_in)

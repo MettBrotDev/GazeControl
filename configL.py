@@ -61,7 +61,7 @@ class Config:
     PRETRAIN_BATCH_SIZE = 16        # larger images -> smaller batch
     FREEZE_DECODER_EPOCHS = 1
     PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_L.pth"
-    PRETRAIN_L1_WEIGHT = 1.0
+    PRETRAIN_L1_WEIGHT = 10.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
     # Perceptual loss weight used only during decoder pretraining
