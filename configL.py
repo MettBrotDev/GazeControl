@@ -56,12 +56,12 @@ class Config:
     STEP_MASK_SIGMA_SCALE = 0.35
 
     # Pretrained artifacts
-    PRETRAIN_STEPS = 40000
+    PRETRAIN_STEPS = 200000
     PRETRAIN_LR = 2e-3
     PRETRAIN_BATCH_SIZE = 16        # larger images -> smaller batch
     FREEZE_DECODER_EPOCHS = 1
     PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_L.pth"
-    PRETRAIN_L1_WEIGHT = 10.0
+    PRETRAIN_L1_WEIGHT = 20.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
     # Perceptual loss weight used only during decoder pretraining
