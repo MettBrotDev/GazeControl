@@ -74,9 +74,9 @@ class DecoderCNN(nn.Module):
         c4 = max(8, c3 // 2)
 
         self.decoder = nn.Sequential(
-            nn.Linear(state_size, 256 * 4 * 4),
-            nn.Unflatten(1, (256, 4, 4)),            # 4x4
-            nn.ConvTranspose2d(256, c1, 4, stride=2, padding=1),  # 8x8
+            nn.Linear(state_size, 128 * 4 * 4),
+            nn.Unflatten(1, (128, 4, 4)),            # 4x4
+            nn.ConvTranspose2d(128, c1, 4, stride=2, padding=1),  # 8x8
             nn.BatchNorm2d(c1),
             nn.LeakyReLU(inplace=True),
             nn.ConvTranspose2d(c1, c2, 4, stride=2, padding=1),   # 16x16
@@ -232,7 +232,7 @@ class ImageEncoderForPretrain(nn.Module):
     """
     def __init__(self, state_size: int, img_size=(32, 32)):
         super().__init__()
-        c1, c2, c3 = 96, 192, 256
+        c1, c2, c3 = 96, 192, 128
         self.features = nn.Sequential(
             nn.Conv2d(3, c1, 3, stride=2, padding=1), nn.BatchNorm2d(c1), nn.GELU(),
             nn.Conv2d(c1, c2, 3, stride=2, padding=1), nn.BatchNorm2d(c2), nn.GELU(),
