@@ -130,16 +130,8 @@ def main():
                     self.image_paths.extend(glob.glob(os.path.join(data_dir, '**', ext), recursive=True))
                     self.image_paths.extend(glob.glob(os.path.join(data_dir, '**', ext.upper()), recursive=True))
                 self.image_paths = sorted(list(set(self.image_paths)))
-                valid = []
-                for p in self.image_paths:
-                    try:
-                        with Image.open(p) as img:
-                            img.verify()
-                        valid.append(p)
-                    except Exception:
-                        continue
-                self.image_paths = valid
-                print(f"Pretrain: found {len(self.image_paths)} images in {data_dir}")
+                # Skip expensive verification; handle bad files at load time
+                print(f"Pretrain: found {len(self.image_paths)} images (unverified) in {data_dir}", flush=True)
             def __len__(self):
                 return len(self.image_paths)
             def __getitem__(self, idx):
