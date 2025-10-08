@@ -73,23 +73,36 @@ class DecoderCNN(nn.Module):
         c3 = max(16, c2 // 2)
         c4 = max(8, c3 // 2)
 
-        self.decoder = nn.Sequential(
-            nn.Linear(state_size, 128 * 4 * 4),
-            nn.Unflatten(1, (128, 4, 4)),            # 4x4
-            nn.ConvTranspose2d(128, c1, 4, stride=2, padding=1),  # 8x8
-            nn.BatchNorm2d(c1),
-            nn.LeakyReLU(inplace=True),
-            nn.ConvTranspose2d(c1, c2, 4, stride=2, padding=1),   # 16x16
-            nn.BatchNorm2d(c2),
-            nn.LeakyReLU(inplace=True),
-            nn.ConvTranspose2d(c2, c3, 4, stride=2, padding=1),   # 32x32
-            nn.BatchNorm2d(c3),
-            nn.LeakyReLU(inplace=True),
-            nn.ConvTranspose2d(c3, c4, 4, stride=2, padding=1),   # 64x64
-            nn.BatchNorm2d(c4),
-            nn.LeakyReLU(inplace=True),
-            nn.Conv2d(c4, 3, kernel_size=3, padding=1),           # 64x64 -> RGB
-        )
+        # Project latent to 4x4 feature map
+        self.fc = nn.Linear(state_size, 128 * 4 * 4)
+        self.unflatten = nn.Unflatten(1, (128, 4, 4))
+
+        # 4x4 -> 8x8
+        self.up1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.conv1 = nn.Conv2d(128, c1, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(c1) if c1 >= 16 else nn.GroupNorm(max(1, min(4, c1)), c1)
+        self.act1 = nn.LeakyReLU(inplace=True)
+
+        # 8x8 -> 16x16
+        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.conv2 = nn.Conv2d(c1, c2, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(c2) if c2 >= 16 else nn.GroupNorm(max(1, min(4, c2)), c2)
+        self.act2 = nn.LeakyReLU(inplace=True)
+
+        # 16x16 -> 32x32
+        self.up3 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.conv3 = nn.Conv2d(c2, c3, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(c3) if c3 >= 16 else nn.GroupNorm(max(1, min(4, c3)), c3)
+        self.act3 = nn.LeakyReLU(inplace=True)
+
+        # 32x32 -> 64x64
+        self.up4 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.conv4 = nn.Conv2d(c3, c4, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(c4) if c4 >= 16 else nn.GroupNorm(max(1, min(4, c4)), c4)
+        self.act4 = nn.LeakyReLU(inplace=True)
+
+        # final RGB conv (64x64)
+        self.conv_out = nn.Conv2d(c4, 3, kernel_size=3, padding=1)
 
         if out_activation == "tanh":
             self.output_act = nn.Tanh()
@@ -97,7 +110,15 @@ class DecoderCNN(nn.Module):
             self.output_act = nn.Sigmoid()
 
     def forward(self, h):
-        x = self.decoder(h)
+        # Latent to 4x4
+        x = self.fc(h)
+        x = self.unflatten(x)
+        # Upsample + conv blocks
+        x = self.up1(x); x = self.conv1(x); x = self.bn1(x); x = self.act1(x)
+        x = self.up2(x); x = self.conv2(x); x = self.bn2(x); x = self.act2(x)
+        x = self.up3(x); x = self.conv3(x); x = self.bn3(x); x = self.act3(x)
+        x = self.up4(x); x = self.conv4(x); x = self.bn4(x); x = self.act4(x)
+        x = self.conv_out(x)
         x = self.output_act(x)
         if x.shape[-2] != self.out_h or x.shape[-1] != self.out_w:
             x = F.interpolate(x, size=(self.out_h, self.out_w), mode='bilinear', align_corners=False)
