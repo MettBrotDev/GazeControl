@@ -65,7 +65,7 @@ class Config:
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
     # Perceptual loss weight used only during decoder pretraining
-    PRETRAIN_PERC_WEIGHT = 0.01
+    PRETRAIN_PERC_WEIGHT = 0.015
 
     PRETRAINED_MODEL_PATH = "./PastRuns/precep_9M.pth"
 
