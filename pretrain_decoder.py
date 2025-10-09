@@ -210,7 +210,7 @@ def main():
     l1_weight = float(args.l1_weight) if args.l1_weight is not None else float(getattr(Config, "PRETRAIN_L1_WEIGHT", getattr(Config, "PRETRAIN_L1_MIX", 5.0)))
     _perc_cli = getattr(args, "perceptual_weight", None)
     perc_weight = float(_perc_cli) if _perc_cli is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))
-    l1 = nn.MSELoss(reduction="mean")
+    l1 = nn.L1Loss(reduction="mean")
 
     def total_variation(x):
         tv_h = (x[:, :, 1:, :] - x[:, :, :-1, :]).abs().mean()

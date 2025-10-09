@@ -1,6 +1,6 @@
 class Config:
     # Scale for ~300x300 Pathfinder images
-    IMG_SIZE = (300, 300)               # downscale slightly from 300 
+    IMG_SIZE = (200, 200)               # downscale slightly from 300 
     FOVEA_OUTPUT_SIZE = (24, 24)        # higher encoder input res
     FOVEA_CROP_SIZE = (24, 24)          # base crop; multi-scale uses 24,48,96
     EPOCHS = 200
