@@ -11,6 +11,7 @@ import glob
 from PIL import Image
 # TensorBoard removed; using optional Weights & Biases instead
 import torchvision.utils as vutils
+from pytorch_msssim import ms_ssim
 try:
     import wandb
 except Exception:
@@ -33,6 +34,9 @@ def main():
     parser.add_argument("--fg-mask", action="store_true", help="Foreground-weight L1 using brightness of target; reduces all-black collapse")
     parser.add_argument("--fg-thresh", type=float, default=0.1, help="Brightness threshold in [0,1] for foreground mask (default 0.1)")
     parser.add_argument("--bg-weight", type=float, default=0.1, help="Relative weight for background pixels when --fg-mask is enabled (default 0.1)")
+    # MS-SSIM options
+    parser.add_argument("--ssim", action="store_true", help="Add MS-SSIM structural loss term (1 - MS-SSIM)")
+    parser.add_argument("--ssim-weight", type=float, default=None, help="Weight for SSIM term; overrides Config.PRETRAIN_SSIM_WEIGHT")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
@@ -186,8 +190,7 @@ def main():
 
     autoenc = PretrainAutoencoder(state_size=enc_dim,
                                   img_size=Config.IMG_SIZE,
-                                  decoder_latent_ch=Config.DECODER_LATENT_CH,
-                                  out_activation="tanh").to(Config.DEVICE)
+                                  decoder_latent_ch=Config.DECODER_LATENT_CH).to(Config.DEVICE)
 
     # Lightweight summary: parameter counts and a dry-run forward for shape sanity
     def _count_params(m: nn.Module):
@@ -218,6 +221,10 @@ def main():
         return tv_h + tv_w
     use_amp = bool(getattr(Config, "PRETRAIN_USE_AMP", True))
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+    # MS-SSIM enable + weight
+    _ssim_cli = getattr(args, "ssim_weight", None)
+    ssim_weight = float(_ssim_cli) if _ssim_cli is not None else float(getattr(Config, "PRETRAIN_SSIM_WEIGHT", 0.0))
+    use_ssim = bool(args.ssim or ssim_weight > 0)
 
     steps = 0
     max_steps = args.steps if args.steps is not None else Config.PRETRAIN_STEPS
@@ -241,6 +248,13 @@ def main():
                     loss_perc = criterion(preds_p, imgs_p)
                 else:
                     loss_perc = 0.0
+                # Optional MS-SSIM (structure)
+                if use_ssim:
+                    # Inputs are in [-1,1]; set data_range=2.0; average across batch
+                    mssim_val = ms_ssim(pred, images, data_range=2.0, size_average=True)
+                    loss_ssim = 1.0 - mssim_val
+                else:
+                    loss_ssim = 0.0
                 if args.fg_mask:
                     # Luminance in [-1,1] space converted to [0,1]
                     img_y = (images.clamp(-1.0,1.0) + 1.0) * 0.5
@@ -253,9 +267,9 @@ def main():
                     l1_loss = l1(pred, images)
                 # Scale perceptual component by perc_weight
                 if isinstance(loss_perc, torch.Tensor):
-                    loss = perc_weight * loss_perc + l1_weight * l1_loss
+                    loss = perc_weight * loss_perc + l1_weight * l1_loss + (ssim_weight * loss_ssim if use_ssim else 0.0)
                 else:
-                    loss = l1_weight * l1_loss
+                    loss = l1_weight * l1_loss + (ssim_weight * loss_ssim if use_ssim else 0.0)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -268,6 +282,8 @@ def main():
                         "pretrain/loss": float(loss.item()),
                         "pretrain/l1": float(l1_loss.item()),
                         "pretrain/perc": float(loss_perc if not isinstance(loss_perc, torch.Tensor) else loss_perc.item()),
+                        "pretrain/ssim_loss": float(loss_ssim if not isinstance(loss_ssim, torch.Tensor) else loss_ssim.item()),
+                        "pretrain/ssim_weight": float(ssim_weight),
                         "pretrain/perc_weight": perc_weight,
                         "pretrain/l1_weight": l1_weight,
                         "lr": float(sched.get_last_lr()[0]),

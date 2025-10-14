@@ -61,10 +61,10 @@ class Encoder(nn.Module):
 
 class DecoderCNN(nn.Module):
     """Simple, modest-capacity decoder for up to ~300x300 outputs.
-    Upsamples to 64x64 with four transposed-conv stages, then bilinear-resizes to the final size.
-    Channel widths scale with latent_ch but remain small.
+    Uses bilinear upsample + 3x3 conv blocks to 64x64, then bilinear-resizes to the final size.
+    Channel widths scale with latent_ch but remain small. Output is always tanh in [-1,1].
     """
-    def __init__(self, state_size: int, out_size=(32, 32), latent_ch: int = 96, out_activation: str = "sigmoid"):
+    def __init__(self, state_size: int, out_size=(32, 32), latent_ch: int = 96):
         super().__init__()
         self.out_h, self.out_w = out_size
 
@@ -101,13 +101,9 @@ class DecoderCNN(nn.Module):
         self.bn4 = nn.BatchNorm2d(c4) if c4 >= 16 else nn.GroupNorm(max(1, min(4, c4)), c4)
         self.act4 = nn.LeakyReLU(inplace=True)
 
-        # final RGB conv (64x64)
+    # final RGB conv (64x64)
         self.conv_out = nn.Conv2d(c4, 3, kernel_size=3, padding=1)
 
-        if out_activation == "tanh":
-            self.output_act = nn.Tanh()
-        else:
-            self.output_act = nn.Sigmoid()
 
     def forward(self, h):
         # Latent to 4x4
@@ -119,7 +115,7 @@ class DecoderCNN(nn.Module):
         x = self.up3(x); x = self.conv3(x); x = self.bn3(x); x = self.act3(x)
         x = self.up4(x); x = self.conv4(x); x = self.bn4(x); x = self.act4(x)
         x = self.conv_out(x)
-        x = self.output_act(x)
+        x = torch.tanh(x)
         if x.shape[-2] != self.out_h or x.shape[-1] != self.out_w:
             x = F.interpolate(x, size=(self.out_h, self.out_w), mode='bilinear', align_corners=False)
         return x
@@ -172,8 +168,8 @@ class GazeControlModel(nn.Module):
         self.lstm = nn.LSTM(input_size=self.input_dim, hidden_size=state_size, num_layers=lstm_layers, batch_first=True)
         self.lstm_layers = lstm_layers
 
-        # CNN decoder from hidden state to image (default sigmoid for main training)
-        self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch, out_activation="sigmoid")
+        # CNN decoder from hidden state to image (always tanh for [-1,1] images)
+        self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch)
 
     def init_memory(self, batch_size, device):
         """Return zero (h0, c0) for LSTM of shape (num_layers, B, state_size)."""
@@ -278,10 +274,10 @@ class PretrainAutoencoder(nn.Module):
     The encoder projects to state_size so the decoder learns with the same input dimension
     as in the main model (HIDDEN_SIZE).
     """
-    def __init__(self, state_size: int, img_size=(32, 32), decoder_latent_ch: int = 48, out_activation: str = "sigmoid"):
+    def __init__(self, state_size: int, img_size=(32, 32), decoder_latent_ch: int = 48):
         super().__init__()
         self.encoder = ImageEncoderForPretrain(state_size=state_size, img_size=img_size)
-        self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch, out_activation=out_activation)
+        self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch)
 
     def forward(self, x):
         h = self.encoder(x)

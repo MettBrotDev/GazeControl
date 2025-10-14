@@ -66,6 +66,8 @@ class Config:
     PRETRAIN_USE_AMP = True
     # Perceptual loss weight used only during decoder pretraining
     PRETRAIN_PERC_WEIGHT = 0.015
+    # Structural term (1 - MS-SSIM) weight for decoder pretraining
+    PRETRAIN_SSIM_WEIGHT = 6.0
 
     PRETRAINED_MODEL_PATH = "./PastRuns/precep_9M.pth"
 

@@ -7,6 +7,7 @@ scipy>=1.7.0
 # Deep learning
 torch>=1.10.0
 torchvision>=0.11.0
+pytorch-msssim>=1.0.0
 
 # Image processing
 pillow>=8.3.0
