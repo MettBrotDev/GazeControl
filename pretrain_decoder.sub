@@ -13,7 +13,7 @@ PYTHON                  = .venv/bin/python
 
 # Pretraining run knobs
 PRETRAIN_BATCH          = 64
-STEPS                   = 200000
+STEPS                   = 40000
 # Optional flags: set to e.g. "--no-perc" or leave empty
 NO_PERC_FLAG            = 
 PERC_RESIZE_FLAG        = 
