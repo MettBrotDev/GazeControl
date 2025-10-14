@@ -65,7 +65,7 @@ class Config:
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
     # Perceptual loss weight used only during decoder pretraining
-    PRETRAIN_PERC_WEIGHT = 0.015
+    PRETRAIN_PERC_WEIGHT = 0.0
     # Structural term (1 - MS-SSIM) weight for decoder pretraining
     PRETRAIN_SSIM_WEIGHT = 6.0
 
