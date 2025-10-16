@@ -12,7 +12,7 @@ class Config:
     BATCH_SIZE = 32
 
     # Model dims
-    HIDDEN_SIZE = 2048               # reasonable state for larger images
+    HIDDEN_SIZE = 3072               # reasonable state for larger images
     ENCODER_C1 = 64                  # Wider encoder
     ENCODER_C2 = 128
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # due to AdaptivePool 2x2
@@ -65,7 +65,7 @@ class Config:
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
     # Perceptual loss weight used only during decoder pretraining
-    PRETRAIN_PERC_WEIGHT = 0.0
+    PRETRAIN_PERC_WEIGHT = 0.015
     # Structural term (1 - MS-SSIM) weight for decoder pretraining
     PRETRAIN_SSIM_WEIGHT = 6.0
 
