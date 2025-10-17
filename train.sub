@@ -14,7 +14,7 @@ PYTHON                  = .venv/bin/python
 # Training run knobs
 USE_PRETRAINED_FLAG     = --use-pretrained
 LOAD_FULL_FLAG          = 
-NO_RL_FLAG              = 
+NO_RL_FLAG              = --no-rl
 EXTRA_ARGS              = 
 
 universe                = vanilla
