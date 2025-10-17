@@ -409,6 +409,12 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     l1_step = (w * (recon_y - img_y).abs()).mean() * weight + l1_m
                 else:
                     l1_step = l1_loss(reconstruction, image) * weight + l1_m
+                
+                # ANTI-COLLAPSE: Add variance penalty at each step
+                if getattr(Config, "USE_VARIANCE_PENALTY", False):
+                    recon_var = reconstruction.var(dim=[2, 3]).mean()
+                    var_penalty = torch.exp(-recon_var * 10.0)
+                    l1_step = l1_step + getattr(Config, "VARIANCE_PENALTY_WEIGHT", 0.1) * var_penalty * weight
 
                 # Compute MS-SSIM loss for this step if enabled
                 if use_ssim:
@@ -478,6 +484,12 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                 final_l1 = (w * (final_y - img_y).abs()).mean()
             else:
                 final_l1 = l1_loss(final_recon, image)
+            
+            # ANTI-COLLAPSE: Add variance penalty to final reconstruction
+            if getattr(Config, "USE_VARIANCE_PENALTY", False):
+                recon_var = final_recon.var(dim=[2, 3]).mean()
+                var_penalty = torch.exp(-recon_var * 10.0)
+                final_l1 = final_l1 + getattr(Config, "VARIANCE_PENALTY_WEIGHT", 0.1) * var_penalty
             
             # Optional perceptual loss
             final_perc = None

@@ -1,14 +1,14 @@
 class Config:
     # Scale for ~300x300 Pathfinder images
     IMG_SIZE = (200, 200)               # downscale slightly from 300 
-    FOVEA_OUTPUT_SIZE = (24, 24)        # higher encoder input res
-    FOVEA_CROP_SIZE = (24, 24)          # base crop; multi-scale uses 24,48,96
+    FOVEA_OUTPUT_SIZE = (32, 32)        # higher encoder input res
+    FOVEA_CROP_SIZE = (32, 32)          # base crop; multi-scale uses 32,64,128
     EPOCHS = 200
 
     # Training
-    LEARNING_RATE = 3e-4        # LOWER THE LR BEFORE CONTINUING A RL TRAINING RUN!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    LEARNING_RATE = 5e-5        # Much slower LR to avoid collapse
     WEIGHT_DECAY = 1e-4
-    GRAD_CLIP_NORM = 1.0
+    GRAD_CLIP_NORM = 0.5        # Tighter gradient clipping
     BATCH_SIZE = 32
 
     # Model dims
@@ -45,13 +45,17 @@ class Config:
 
     # Reconstruction loss
     L1_WEIGHT = 1.0
-    PERC_WEIGHT = 0.0025             # Perceptual loss (VGG) - increased for structure
-    SSIM_WEIGHT = 1.0             # MS-SSIM structural loss weight - increased
+    PERC_WEIGHT = 0.05             # MUCH stronger perceptual loss
+    SSIM_WEIGHT = 2.0              # MUCH stronger structural loss
     
     # Foreground masking for L1 loss
     USE_FG_MASK = True             # Enable foreground-weighted L1 loss
-    FG_THRESH = 0.1                # Brightness threshold for foreground (0-1)
-    BG_WEIGHT = 0.1                # Relative weight for background pixels
+    FG_THRESH = 0.15               # Higher threshold to focus on bright lines
+    BG_WEIGHT = 0.01               # EXTREME: 100:1 ratio favoring foreground
+    
+    # Anti-collapse: variance penalty
+    USE_VARIANCE_PENALTY = True    # Penalize uniform/low-variance outputs
+    VARIANCE_PENALTY_WEIGHT = 0.5  # Strong penalty for collapse
 
     # Step loss
     USE_MASKED_STEP_LOSS = True
@@ -64,7 +68,7 @@ class Config:
     PRETRAIN_STEPS = 200000
     PRETRAIN_LR = 2e-3
     PRETRAIN_BATCH_SIZE = 16        # larger images -> smaller batch
-    FREEZE_DECODER_EPOCHS = 0       # DON'T freeze decoder - let it adapt if needed
+    FREEZE_DECODER_EPOCHS = 0       # NEVER freeze - must adapt from start
     PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_L.pth"
     PRETRAIN_L1_WEIGHT = 20.0
     PRETRAIN_MSE_WEIGHT = 0.0
