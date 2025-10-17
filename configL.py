@@ -55,7 +55,7 @@ class Config:
     
     # Anti-collapse: variance penalty
     USE_VARIANCE_PENALTY = True    # Penalize uniform/low-variance outputs
-    VARIANCE_PENALTY_WEIGHT = 0.5  # Strong penalty for collapse
+    VARIANCE_PENALTY_WEIGHT = 1.0  # Strong penalty for collapse
 
     # Step loss
     USE_MASKED_STEP_LOSS = True

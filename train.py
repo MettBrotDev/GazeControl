@@ -411,9 +411,11 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     l1_step = l1_loss(reconstruction, image) * weight + l1_m
                 
                 # ANTI-COLLAPSE: Add variance penalty at each step
+                step_var_penalty = 0.0
                 if getattr(Config, "USE_VARIANCE_PENALTY", False):
                     recon_var = reconstruction.var(dim=[2, 3]).mean()
                     var_penalty = torch.exp(-recon_var * 10.0)
+                    step_var_penalty = var_penalty.item()
                     l1_step = l1_step + getattr(Config, "VARIANCE_PENALTY_WEIGHT", 0.1) * var_penalty * weight
 
                 # Compute MS-SSIM loss for this step if enabled
@@ -486,9 +488,13 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                 final_l1 = l1_loss(final_recon, image)
             
             # ANTI-COLLAPSE: Add variance penalty to final reconstruction
+            final_var_penalty = 0.0
+            final_variance = 0.0
             if getattr(Config, "USE_VARIANCE_PENALTY", False):
                 recon_var = final_recon.var(dim=[2, 3]).mean()
+                final_variance = recon_var.item()
                 var_penalty = torch.exp(-recon_var * 10.0)
+                final_var_penalty = var_penalty.item()
                 final_l1 = final_l1 + getattr(Config, "VARIANCE_PENALTY_WEIGHT", 0.1) * var_penalty
             
             # Optional perceptual loss
@@ -603,6 +609,9 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     logs["loss/perc"] = float(final_perc.item())
                 if final_ssim is not None:
                     logs["loss/ssim"] = float(final_ssim.item())
+                if getattr(Config, "USE_VARIANCE_PENALTY", False):
+                    logs["loss/variance_penalty"] = final_var_penalty
+                    logs["metrics/output_variance"] = final_variance
                 wandb.log(logs, step=global_step)
 
             # Occasionally log a synchronized figure: Original+GazePath vs Reconstruction (every 10 batches)
