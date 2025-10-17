@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, ConcatDataset, Dataset
 from torchvision import datasets, transforms
 import torchvision.utils as vutils
+from pytorch_msssim import ms_ssim
 try:
     import wandb
 except Exception:
@@ -255,11 +256,19 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
             p.requires_grad = False
     opt_backbone = torch.optim.AdamW(backbone_params, lr=getattr(Config, 'RL_BACKBONE_LR', Config.LEARNING_RATE), weight_decay=Config.WEIGHT_DECAY)  # RL backbone lr not in config rn
 
-    mse_loss = torch.nn.MSELoss()
     l1_loss = torch.nn.L1Loss()
+    # Store loss weights as local variables for consistency with pretrain script
+    l1_weight = float(getattr(Config, 'L1_WEIGHT', 1.0))
     # Optional perceptual loss on final reconstruction (disabled if weight <= 0)
     perc_weight = float(getattr(Config, 'PERC_WEIGHT', 0.0))
     criterion_perc = PerceptualLoss().to(Config.DEVICE) if perc_weight > 0.0 else None
+    # MS-SSIM loss
+    ssim_weight = float(getattr(Config, 'SSIM_WEIGHT', 0.0))
+    use_ssim = ssim_weight > 0.0
+    # Foreground mask for L1 loss
+    use_fg_mask = bool(getattr(Config, 'USE_FG_MASK', False))
+    fg_thresh = float(getattr(Config, 'FG_THRESH', 0.1))
+    bg_weight = float(getattr(Config, 'BG_WEIGHT', 0.1))
 
     # RL is always fully attached; no detach/ramp schedule
 
@@ -342,14 +351,10 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     mask = _make_gaussian_mask(H, W, gaze, sigma_frac=sigma_frac, device=Config.DEVICE)  # (B,1,H,W)
                     # Broadcast to channels and compute per-sample masked loss, then mean over batch
                     mask3 = mask.expand(-1, 3, H, W)
-                    per_sample_mse = (((reconstruction - image) ** 2 * mask3).flatten(1).sum(dim=1) /
-                                      (mask3.flatten(1).sum(dim=1) + 1e-6))
                     per_sample_l1 = (((reconstruction - image).abs() * mask3).flatten(1).sum(dim=1) /
                                      (mask3.flatten(1).sum(dim=1) + 1e-6))
-                    mse_m = per_sample_mse.mean()
                     l1_m = per_sample_l1.mean()
                 else:
-                    mse_m = 0
                     l1_m = 0
                 
                 # Weight increases linearly between STEP_LOSS_MIN and STEP_LOSS_MAX across steps
@@ -358,21 +363,34 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                 max_w = getattr(Config, "STEP_LOSS_MAX", 0.2)
                 weight = min_w + (max_w - min_w) * step_frac
 
-                # Use a combination of full and masked loss to encourage both global and local accuracy
-                # We weight the full loss by the step weight and add the masked loss unweighted since the full mse should be bad first and then improve. We dont want to enforce unnecessary complexity with predictions.
-                mse = mse_loss(reconstruction, image) * weight + mse_m
-                l1 = l1_loss(reconstruction, image) * weight + l1_m
+                # Compute L1 loss with optional foreground masking
+                if use_fg_mask:
+                    # Compute luminance for foreground detection
+                    img_y = 0.2989 * image[:,0:1] + 0.5870 * image[:,1:2] + 0.1140 * image[:,2:3]
+                    recon_y = 0.2989 * reconstruction[:,0:1] + 0.5870 * reconstruction[:,1:2] + 0.1140 * reconstruction[:,2:3]
+                    # Create weight mask: foreground=1.0, background=bg_weight
+                    w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
+                    # Apply weight to L1 error
+                    l1_step = (w * (recon_y - img_y).abs()).mean() * weight + l1_m
+                else:
+                    l1_step = l1_loss(reconstruction, image) * weight + l1_m
 
-                rec_error = Config.MSE_WEIGHT * mse + Config.L1_WEIGHT * l1
+                # Compute MS-SSIM loss for this step if enabled
+                if use_ssim:
+                    mssim_step_val = ms_ssim(reconstruction, image, data_range=1.0, size_average=True)
+                    ssim_step = (1.0 - mssim_step_val) * weight
+                else:
+                    ssim_step = 0.0
+
+                rec_error = l1_weight * l1_step + (ssim_weight * ssim_step if use_ssim else 0.0)
 
                 total_rec_loss = total_rec_loss + rec_error
 
                 # ----- RL: compute reward per-sample from improvement in FULL reconstruction loss -----
                 with torch.no_grad():
-                    # Per-sample full losses to match per-sample actions/values
-                    full_mse_per = F.mse_loss(reconstruction, image, reduction='none').mean(dim=(1,2,3))  # (B,)
+                    # Per-sample full L1 loss to match per-sample actions/values
                     full_l1_per = F.l1_loss(reconstruction, image, reduction='none').mean(dim=(1,2,3))    # (B,)
-                    curr_full_err = Config.MSE_WEIGHT * full_mse_per + Config.L1_WEIGHT * full_l1_per     # (B,)
+                    curr_full_err = l1_weight * full_l1_per     # (B,)
                     if prev_full_err is None:
                         # first step: set baseline only
                         prev_full_err = curr_full_err.detach()
@@ -413,15 +431,34 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
 
             # Final reconstruction from final LSTM state with larger weight
             final_recon = model.decode_from_state(state)
-            final_mse = mse_loss(final_recon, image)
-            final_l1 = l1_loss(final_recon, image)
+            
+            # Compute L1 loss with optional foreground masking
+            if use_fg_mask:
+                img_y = 0.2989 * image[:,0:1] + 0.5870 * image[:,1:2] + 0.1140 * image[:,2:3]
+                final_y = 0.2989 * final_recon[:,0:1] + 0.5870 * final_recon[:,1:2] + 0.1140 * final_recon[:,2:3]
+                w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
+                final_l1 = (w * (final_y - img_y).abs()).mean()
+            else:
+                final_l1 = l1_loss(final_recon, image)
+            
+            # Optional perceptual loss
             final_perc = None
             if criterion_perc is not None:
                 final_perc = criterion_perc(final_recon, image)
+            
+            # Optional MS-SSIM loss
+            final_ssim = None
+            if use_ssim:
+                # MS-SSIM expects inputs in [0,1] range
+                mssim_val = ms_ssim(final_recon, image, data_range=1.0, size_average=True)
+                final_ssim = 1.0 - mssim_val
+            
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
-            final_loss = (Config.MSE_WEIGHT * final_mse + Config.L1_WEIGHT * final_l1) * final_mult
+            final_loss = l1_weight * final_l1 * final_mult
             if final_perc is not None and perc_weight > 0.0:
                 final_loss = final_loss + perc_weight * final_perc * final_mult
+            if final_ssim is not None and ssim_weight > 0.0:
+                final_loss = final_loss + ssim_weight * final_ssim * final_mult
 
             total_loss = total_rec_loss + final_loss
 
@@ -505,15 +542,17 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                 next_save_at += 50000
 
             # log reconstruction loss via W&B
-            rec_loss_unscaled = Config.MSE_WEIGHT * final_mse + Config.L1_WEIGHT * final_l1
+            rec_loss_unscaled = l1_weight * final_l1
             if wb is not None:
                 logs = {
-                    "loss/rec": float(rec_loss_unscaled.item()),
+                    "loss/rec_l1": float(rec_loss_unscaled.item()),
                     "loss/total": float(total_loss.item()),
                     "episode/steps": int(Config.MAX_STEPS),
                 }
                 if final_perc is not None:
                     logs["loss/perc"] = float(final_perc.item())
+                if final_ssim is not None:
+                    logs["loss/ssim"] = float(final_ssim.item())
                 wandb.log(logs, step=global_step)
 
             # Occasionally log a synchronized figure: Original+GazePath vs Reconstruction (every 10 batches)

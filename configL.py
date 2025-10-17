@@ -12,7 +12,7 @@ class Config:
     BATCH_SIZE = 32
 
     # Model dims
-    HIDDEN_SIZE = 3072               # reasonable state for larger images
+    HIDDEN_SIZE = 2048               # reasonable state for larger images
     ENCODER_C1 = 64                  # Wider encoder
     ENCODER_C2 = 128
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # due to AdaptivePool 2x2
@@ -44,9 +44,14 @@ class Config:
     GAZE_BOUND_FRACTION = 0.1
 
     # Reconstruction loss
-    MSE_WEIGHT = 0.1
     L1_WEIGHT = 1.0
     PERC_WEIGHT = 0.005
+    SSIM_WEIGHT = 1.0           # MS-SSIM structural loss weight
+    
+    # Foreground masking for L1 loss
+    USE_FG_MASK = True         # Enable foreground-weighted L1 loss
+    FG_THRESH = 0.1            # Brightness threshold for foreground (0-1)
+    BG_WEIGHT = 0.3            # Relative weight for background pixels
 
     # Step loss
     USE_MASKED_STEP_LOSS = True
