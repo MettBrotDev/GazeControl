@@ -12,7 +12,7 @@ class Config:
     BATCH_SIZE = 32
 
     # Model dims
-    HIDDEN_SIZE = 3072               # reasonable state for larger images
+    HIDDEN_SIZE = 2048               # LSTM hidden size (was 3072 = 126M LSTM params!)
     ENCODER_C1 = 96                  # Wider encoder (was 64)
     ENCODER_C2 = 192                 # Wider encoder (was 128)
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # due to AdaptivePool 2x2 = 768

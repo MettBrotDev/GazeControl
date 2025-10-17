@@ -135,14 +135,17 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
     next_save_at = 5000
 
     # Setup transforms
+    # NOTE: Decoder was pretrained on [-1,1] range (Tanh output), so we must match that range
     transform_img = transforms.Compose([
         transforms.Resize(Config.IMG_SIZE),
         transforms.ToTensor(),
+        transforms.Lambda(lambda x: x * 2.0 - 1.0),  # [0,1] → [-1,1]
     ])
     transform_mnist = transforms.Compose([
         transforms.Resize(Config.IMG_SIZE),
         transforms.ToTensor(),
-        transforms.Lambda(lambda x: x.repeat(3,1,1))
+        transforms.Lambda(lambda x: x.repeat(3,1,1)),
+        transforms.Lambda(lambda x: x * 2.0 - 1.0),  # [0,1] → [-1,1]
     ])
 
     # choose dataset
@@ -248,13 +251,16 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
     backbone_params = list(model.parameters())
     
     # Print parameter counts
-    def count_params(module):
-        return sum(p.numel() for p in module.parameters() if p.requires_grad)
+    def count_params(module, only_trainable=False):
+        if only_trainable:
+            return sum(p.numel() for p in module.parameters() if p.requires_grad)
+        return sum(p.numel() for p in module.parameters())
     
     encoder_params = count_params(model.encoder)
     fusion_params = count_params(model.fusion)
     lstm_params = count_params(model.lstm)
     decoder_params = count_params(model.decoder)
+    decoder_trainable = count_params(model.decoder, only_trainable=True)
     total_model_params = count_params(model)
     agent_params = count_params(agent)
     
@@ -264,9 +270,10 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
     print(f"Encoder:    {encoder_params:>12,} params ({encoder_params/1e6:.2f}M)")
     print(f"Fusion MLP: {fusion_params:>12,} params ({fusion_params/1e6:.2f}M)")
     print(f"LSTM:       {lstm_params:>12,} params ({lstm_params/1e6:.2f}M)")
-    print(f"Decoder:    {decoder_params:>12,} params ({decoder_params/1e6:.2f}M)")
+    print(f"Decoder:    {decoder_params:>12,} params ({decoder_params/1e6:.2f}M) {'[FROZEN]' if decoder_trainable == 0 else ''}")
     print(f"{'-'*60}")
     print(f"Total Model:{total_model_params:>12,} params ({total_model_params/1e6:.2f}M)")
+    print(f"Trainable:  {count_params(model, only_trainable=True):>12,} params ({count_params(model, only_trainable=True)/1e6:.2f}M)")
     print(f"Agent (RL): {agent_params:>12,} params ({agent_params/1e6:.2f}M)")
     print(f"{'-'*60}")
     print(f"GRAND TOTAL:{total_model_params + agent_params:>12,} params ({(total_model_params + agent_params)/1e6:.2f}M)")
@@ -402,7 +409,7 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
 
                 # Compute MS-SSIM loss for this step if enabled
                 if use_ssim:
-                    mssim_step_val = ms_ssim(reconstruction, image, data_range=1.0, size_average=True)
+                    mssim_step_val = ms_ssim(reconstruction, image, data_range=2.0, size_average=True)
                     ssim_step = (1.0 - mssim_step_val) * weight
                 else:
                     ssim_step = 0.0
@@ -474,8 +481,8 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
             # Optional MS-SSIM loss
             final_ssim = None
             if use_ssim:
-                # MS-SSIM expects inputs in [0,1] range
-                mssim_val = ms_ssim(final_recon, image, data_range=1.0, size_average=True)
+                # MS-SSIM expects inputs in [-1,1] range, set data_range=2.0
+                mssim_val = ms_ssim(final_recon, image, data_range=2.0, size_average=True)
                 final_ssim = 1.0 - mssim_val
             
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
@@ -584,9 +591,9 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
             if batch_idx % 10 == 0:
                 try:
                     H, W = Config.IMG_SIZE
-                    # Prepare numpy images
-                    orig_np = image[0].detach().cpu().permute(1, 2, 0).numpy()
-                    recon_np = reconstruction[0].detach().cpu().permute(1, 2, 0).numpy()
+                    # Prepare numpy images (convert from [-1,1] to [0,1] for display)
+                    orig_np = ((image[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
+                    recon_np = ((reconstruction[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
                     # Build combined figure
                     fig, axs = plt.subplots(1, 2, figsize=(8, 4))
                     # Left: Original with gaze path
