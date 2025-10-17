@@ -500,8 +500,9 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
             # ANTI-COLLAPSE: Penalize near-zero latent codes (prevents LSTM collapse)
             latent_norm_penalty = 0.0
             if getattr(Config, "USE_LATENT_NORM_PENALTY", False):
-                # state is the final LSTM hidden state fed to decoder
-                latent_norm = torch.norm(state, dim=1).mean()  # L2 norm across latent dimensions
+                # state is a tuple (hidden, cell) from LSTM, extract hidden state
+                h_state = state[0] if isinstance(state, tuple) else state
+                latent_norm = torch.norm(h_state, dim=1).mean()  # L2 norm across latent dimensions
                 min_norm = getattr(Config, "LATENT_NORM_MIN", 0.5)
                 norm_deficit = F.relu(min_norm - latent_norm)
                 latent_norm_penalty = norm_deficit.item()
@@ -625,7 +626,8 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     logs["metrics/output_variance"] = final_variance
                 if getattr(Config, "USE_LATENT_NORM_PENALTY", False):
                     logs["loss/latent_norm_penalty"] = latent_norm_penalty
-                    logs["metrics/latent_norm"] = torch.norm(state, dim=1).mean().item()
+                    h_state = state[0] if isinstance(state, tuple) else state
+                    logs["metrics/latent_norm"] = torch.norm(h_state, dim=1).mean().item()
                 wandb.log(logs, step=global_step)
 
             # Occasionally log a synchronized figure: Original+GazePath vs Reconstruction (every 10 batches)
