@@ -44,9 +44,9 @@ class Config:
     GAZE_BOUND_FRACTION = 0.1
 
     # Reconstruction loss
-    L1_WEIGHT = 1.0
+    L1_WEIGHT = 0.7
     PERC_WEIGHT = 0.005
-    SSIM_WEIGHT = 1.0           # MS-SSIM structural loss weight
+    SSIM_WEIGHT = 0.5           # MS-SSIM structural loss weight
     
     # Foreground masking for L1 loss
     USE_FG_MASK = True         # Enable foreground-weighted L1 loss
