@@ -12,7 +12,7 @@ class Config:
     BATCH_SIZE = 32
 
     # Model dims
-    HIDDEN_SIZE = 2048               # reasonable state for larger images
+    HIDDEN_SIZE = 3072               # reasonable state for larger images
     ENCODER_C1 = 64                  # Wider encoder
     ENCODER_C2 = 128
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # due to AdaptivePool 2x2
