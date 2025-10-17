@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
     parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
+    parser.add_argument("--no-var-penalty", action="store_true", help="Disable variance penalty during pretraining regardless of config")
     args = parser.parse_args()
 
     # Dynamically load config if requested
@@ -290,7 +291,7 @@ def main():
                             (gdl_weight * loss_gdl if use_gdl else 0.0))
                 
                 # Anti-collapse: variance penalty
-                if getattr(Config, "USE_VARIANCE_PENALTY", False):
+                if getattr(Config, "USE_VARIANCE_PENALTY", False) and not args.no_var_penalty:
                     # Penalize low-variance (flat) outputs
                     output_var = pred.var(dim=[2, 3]).mean()  # Variance across spatial dims
                     var_penalty = torch.exp(-output_var * 5.0)  # High penalty when var → 0
@@ -351,6 +352,7 @@ def main():
                     wandb.log({
                         "pretrain/orig_vs_recon": [wandb.Image(grid, caption=f"step {steps}")],
                     }, step=steps)
+                
                 now = time.time()
                 img_per_s = (50 * images.size(0)) / max(1e-6, (now - last_log_t))
                 last_log_t = now
