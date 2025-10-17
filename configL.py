@@ -5,10 +5,10 @@ class Config:
     FOVEA_CROP_SIZE = (32, 32)          # base crop; multi-scale uses 32,64,128
     EPOCHS = 200
 
-    # Training
-    LEARNING_RATE = 5e-5        # Much slower LR to avoid collapse
+    # Training - train from scratch needs higher LR
+    LEARNING_RATE = 2e-4        # Higher LR for random init decoder
     WEIGHT_DECAY = 1e-4
-    GRAD_CLIP_NORM = 0.5        # Tighter gradient clipping
+    GRAD_CLIP_NORM = 1.0        # Looser clipping for exploration
     BATCH_SIZE = 32
 
     # Model dims
@@ -43,15 +43,15 @@ class Config:
     USE_GAZE_BOUNDS = True
     GAZE_BOUND_FRACTION = 0.1
 
-    # Reconstruction loss
+    # Reconstruction loss - balanced for random init
     L1_WEIGHT = 1.0
-    PERC_WEIGHT = 0.05             # MUCH stronger perceptual loss
-    SSIM_WEIGHT = 2.0              # MUCH stronger structural loss
+    PERC_WEIGHT = 0.01             # Moderate perceptual loss
+    SSIM_WEIGHT = 0.5              # Moderate structural loss
     
-    # Foreground masking for L1 loss
+    # Foreground masking for L1 loss - less extreme for exploration
     USE_FG_MASK = True             # Enable foreground-weighted L1 loss
-    FG_THRESH = 0.15               # Higher threshold to focus on bright lines
-    BG_WEIGHT = 0.01               # EXTREME: 100:1 ratio favoring foreground
+    FG_THRESH = 0.10               # Lower threshold for early learning
+    BG_WEIGHT = 0.05               # 20:1 ratio (less extreme for random decoder)
     
     # Anti-collapse: variance penalty
     USE_VARIANCE_PENALTY = True    # Penalize uniform/low-variance outputs
