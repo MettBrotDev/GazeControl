@@ -45,7 +45,7 @@ class Config:
 
     # Reconstruction loss
     L1_WEIGHT = 0.7
-    PERC_WEIGHT = 0.005
+    PERC_WEIGHT = 0.001
     SSIM_WEIGHT = 0.5           # MS-SSIM structural loss weight
     
     # Foreground masking for L1 loss
