@@ -615,18 +615,8 @@ class SimpleImageDataset(Dataset):
         # Remove duplicates and sort
         self.image_paths = sorted(list(set(self.image_paths)))
         
-        # Filter out invalid images
-        valid_paths = []
-        for path in self.image_paths:
-            try:
-                with Image.open(path) as img:
-                    img.verify()  # Verify it's a valid image
-                valid_paths.append(path)
-            except Exception as e:
-                print(f"Skipping invalid image {path}: {e}")
-        
-        self.image_paths = valid_paths
-        print(f"Found {len(self.image_paths)} valid images in {data_dir}")
+        # Skip expensive verification; handle bad files at load time
+        print(f"Found {len(self.image_paths)} images (unverified) in {data_dir}")
     
     def __len__(self):
         return len(self.image_paths)
