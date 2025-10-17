@@ -105,8 +105,7 @@ class DecoderCNN(nn.Module):
         self.conv_out = nn.Conv2d(c4, 3, kernel_size=3, padding=1)
         
         # Initialize output bias to positive value to prevent black collapse
-        # tanh(0.5) ≈ 0.46, which maps to ~0.73 in [0,1] space (gray-ish start)
-        nn.init.constant_(self.conv_out.bias, 0.5)
+        nn.init.constant_(self.conv_out.bias, 0.7)
 
 
     def forward(self, h):

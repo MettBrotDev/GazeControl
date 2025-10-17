@@ -620,7 +620,8 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     H, W = Config.IMG_SIZE
                     # Prepare numpy images (convert from [-1,1] to [0,1] for display)
                     orig_np = ((image[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
-                    recon_np = ((reconstruction[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
+                    # Use final_recon instead of intermediate reconstruction
+                    recon_np = ((final_recon[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
                     # Build combined figure
                     fig, axs = plt.subplots(1, 2, figsize=(8, 4))
                     # Left: Original with gaze path

@@ -58,7 +58,7 @@ class Config:
     VARIANCE_PENALTY_WEIGHT = 1.0  # Strong penalty for collapse
 
     # Step loss
-    USE_MASKED_STEP_LOSS = True
+    USE_MASKED_STEP_LOSS = False
     STEP_LOSS_MIN = 0.05           # Increased from 0.02 - stronger early supervision
     STEP_LOSS_MAX = 0.5            # Increased from 0.35 - stronger late supervision
     FINAL_LOSS_MULT = 10.0         # Increased from 8.0 - emphasize final reconstruction
@@ -69,7 +69,7 @@ class Config:
     PRETRAIN_LR = 2e-3
     PRETRAIN_BATCH_SIZE = 16        # larger images -> smaller batch
     FREEZE_DECODER_EPOCHS = 0       # NEVER freeze - must adapt from start
-    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_L.pth"
+    PRETRAINED_DECODER_PATH = ""    # Train from scratch with bias init
     PRETRAIN_L1_WEIGHT = 20.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
