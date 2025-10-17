@@ -45,26 +45,26 @@ class Config:
 
     # Reconstruction loss
     L1_WEIGHT = 1.0
-    PERC_WEIGHT = 0.002            # Perceptual loss (VGG)
-    SSIM_WEIGHT = 0.1              # MS-SSIM structural loss weight
+    PERC_WEIGHT = 0.0025             # Perceptual loss (VGG) - increased for structure
+    SSIM_WEIGHT = 1.0             # MS-SSIM structural loss weight - increased
     
     # Foreground masking for L1 loss
     USE_FG_MASK = True             # Enable foreground-weighted L1 loss
     FG_THRESH = 0.1                # Brightness threshold for foreground (0-1)
-    BG_WEIGHT = 0.2                # Relative weight for background pixels
+    BG_WEIGHT = 0.1                # Relative weight for background pixels
 
     # Step loss
     USE_MASKED_STEP_LOSS = True
-    STEP_LOSS_MIN = 0.02
-    STEP_LOSS_MAX = 0.35
-    FINAL_LOSS_MULT = 8.0
+    STEP_LOSS_MIN = 0.05           # Increased from 0.02 - stronger early supervision
+    STEP_LOSS_MAX = 0.5            # Increased from 0.35 - stronger late supervision
+    FINAL_LOSS_MULT = 10.0         # Increased from 8.0 - emphasize final reconstruction
     STEP_MASK_SIGMA_SCALE = 0.35
 
     # Pretrained artifacts
     PRETRAIN_STEPS = 200000
     PRETRAIN_LR = 2e-3
     PRETRAIN_BATCH_SIZE = 16        # larger images -> smaller batch
-    FREEZE_DECODER_EPOCHS = 1
+    FREEZE_DECODER_EPOCHS = 0       # DON'T freeze decoder - let it adapt if needed
     PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_L.pth"
     PRETRAIN_L1_WEIGHT = 20.0
     PRETRAIN_MSE_WEIGHT = 0.0
