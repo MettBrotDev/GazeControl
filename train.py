@@ -246,6 +246,31 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
     agent = Agent(state_size=Config.HIDDEN_SIZE, pos_encoding_dim=Config.POS_ENCODING_DIM).to(Config.DEVICE)
     policy_params = list(agent.parameters())
     backbone_params = list(model.parameters())
+    
+    # Print parameter counts
+    def count_params(module):
+        return sum(p.numel() for p in module.parameters() if p.requires_grad)
+    
+    encoder_params = count_params(model.encoder)
+    fusion_params = count_params(model.fusion)
+    lstm_params = count_params(model.lstm)
+    decoder_params = count_params(model.decoder)
+    total_model_params = count_params(model)
+    agent_params = count_params(agent)
+    
+    print("\n" + "="*60)
+    print("MODEL ARCHITECTURE SUMMARY")
+    print("="*60)
+    print(f"Encoder:    {encoder_params:>12,} params ({encoder_params/1e6:.2f}M)")
+    print(f"Fusion MLP: {fusion_params:>12,} params ({fusion_params/1e6:.2f}M)")
+    print(f"LSTM:       {lstm_params:>12,} params ({lstm_params/1e6:.2f}M)")
+    print(f"Decoder:    {decoder_params:>12,} params ({decoder_params/1e6:.2f}M)")
+    print(f"{'-'*60}")
+    print(f"Total Model:{total_model_params:>12,} params ({total_model_params/1e6:.2f}M)")
+    print(f"Agent (RL): {agent_params:>12,} params ({agent_params/1e6:.2f}M)")
+    print(f"{'-'*60}")
+    print(f"GRAND TOTAL:{total_model_params + agent_params:>12,} params ({(total_model_params + agent_params)/1e6:.2f}M)")
+    print("="*60 + "\n")
 
     opt_policy = None
     if not no_rl:
