@@ -13,7 +13,7 @@ PYTHON                  = .venv/bin/python
 
 # Pretraining run knobs
 PRETRAIN_BATCH          = 64
-STEPS                   = 100000
+STEPS                   = 200000
 # Optional flags: set to e.g. "--no-perc" or leave empty
 NO_PERC_FLAG            = 
 PERC_RESIZE_FLAG        = 
@@ -29,7 +29,7 @@ log                     = condor_logs/pretrain.$(Cluster).$(Process).log
 output                  = condor_logs/pretrain.$(Cluster).$(Process).out.log
 error                   = condor_logs/pretrain.$(Cluster).$(Process).err.log
 request_gpus            = 1
-request_cpus            = 4
+request_cpus            = 2
 request_memory          = 8 GB
 getenv                  = True
 stream_output           = True

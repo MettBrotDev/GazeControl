@@ -17,7 +17,7 @@ class Config:
     ENCODER_C2 = 192                 # Wider encoder (was 128)
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # due to AdaptivePool 2x2 = 768
     POS_ENCODING_DIM = 64
-    LSTM_LAYERS = 2                  # 2 layers for better temporal modeling
+    LSTM_LAYERS = 1                  # 1 layer for better temporal modeling
 
     # Multi-scale glimpse
     K_SCALES = 3
@@ -43,22 +43,23 @@ class Config:
     USE_GAZE_BOUNDS = True
     GAZE_BOUND_FRACTION = 0.1
 
-    # Reconstruction loss - balanced for random init
+    # Reconstruction loss - rely on proper structural losses
     L1_WEIGHT = 1.0
-    PERC_WEIGHT = 0.01             # Moderate perceptual loss
-    SSIM_WEIGHT = 0.5              # Moderate structural loss
+    PERC_WEIGHT = 0.05             # Perceptual loss (VGG features)
+    SSIM_WEIGHT = 1.0              # MS-SSIM structural similarity
+    GDL_WEIGHT = 2.0               # Gradient Difference Loss
     
-    # Foreground masking for L1 loss - less extreme for exploration
+    # Foreground masking for L1 loss - STRONG foreground bias
     USE_FG_MASK = True             # Enable foreground-weighted L1 loss
     FG_THRESH = 0.10               # Lower threshold for early learning
-    BG_WEIGHT = 0.05               # 20:1 ratio (less extreme for random decoder)
+    BG_WEIGHT = 0.02               # 50:1 ratio - VERY strong foreground focus
     
-    # Anti-collapse: variance penalty + latent norm
-    USE_VARIANCE_PENALTY = True    # Penalize uniform/low-variance outputs
-    VARIANCE_PENALTY_WEIGHT = 1.0  # Strong penalty for collapse
-    USE_LATENT_NORM_PENALTY = True # Penalize near-zero latent codes
-    LATENT_NORM_MIN = 0.5          # Minimum expected L2 norm of latent vector
-    LATENT_NORM_PENALTY_WEIGHT = 1.0  # Strong penalty to push out of collapse basin
+    # Anti-collapse: Enable BOTH penalties to prevent black image collapse
+    USE_VARIANCE_PENALTY = True    # ENABLED: Penalize low-variance (flat) outputs
+    VARIANCE_PENALTY_WEIGHT = 2.0  # INCREASED: Stronger variance enforcement
+    USE_LATENT_NORM_PENALTY = True # Penalize near-zero latent codes from LSTM
+    LATENT_NORM_MIN = 1.0          # Higher threshold (LSTM should produce non-trivial codes)
+    LATENT_NORM_PENALTY_WEIGHT = 0.5  # Moderate penalty
 
     # Step loss
     USE_MASKED_STEP_LOSS = True

@@ -17,7 +17,7 @@ try:
 except Exception:
     wandb = None
 
-from models import PretrainAutoencoder, ImageEncoderForPretrain, PerceptualLoss
+from models import PretrainAutoencoder, ImageEncoderForPretrain, PerceptualLoss, GradientDifferenceLoss
 from config import Config
 
 
@@ -37,6 +37,9 @@ def main():
     # MS-SSIM options
     parser.add_argument("--ssim", action="store_true", help="Add MS-SSIM structural loss term (1 - MS-SSIM)")
     parser.add_argument("--ssim-weight", type=float, default=None, help="Weight for SSIM term; overrides Config.PRETRAIN_SSIM_WEIGHT")
+    # Edge loss for sparse/structural images
+    parser.add_argument("--edge", action="store_true", help="Add edge/gradient loss (critical for Pathfinder)")
+    parser.add_argument("--edge-weight", type=float, default=None, help="Weight for edge term")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
@@ -209,8 +212,8 @@ def main():
     opt = torch.optim.Adam(autoenc.parameters(), lr=lr, betas=(0.9, 0.99))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1000, Config.PRETRAIN_STEPS))
     criterion = None if args.no_perc else PerceptualLoss().to(Config.DEVICE)
-    # Backward-compat: accept either PRETRAIN_L1_WEIGHT (preferred) or fallback to PRETRAIN_L1_MIX
-    l1_weight = float(args.l1_weight) if args.l1_weight is not None else float(getattr(Config, "PRETRAIN_L1_WEIGHT", getattr(Config, "PRETRAIN_L1_MIX", 5.0)))
+
+    l1_weight = float(args.l1_weight) if args.l1_weight is not None else float(getattr(Config, "PRETRAIN_L1_WEIGHT", 5.0))
     _perc_cli = getattr(args, "perceptual_weight", None)
     perc_weight = float(_perc_cli) if _perc_cli is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))
     l1 = nn.L1Loss(reduction="mean")
@@ -225,6 +228,12 @@ def main():
     _ssim_cli = getattr(args, "ssim_weight", None)
     ssim_weight = float(_ssim_cli) if _ssim_cli is not None else float(getattr(Config, "PRETRAIN_SSIM_WEIGHT", 0.0))
     use_ssim = bool(args.ssim or ssim_weight > 0)
+    
+    # Gradient Difference Loss (GDL) from Mathieu et al. 2016
+    _gdl_cli = getattr(args, "edge_weight", None)  # Keep CLI arg name for backward compat
+    gdl_weight = float(_gdl_cli) if _gdl_cli is not None else float(getattr(Config, "GDL_WEIGHT", 0.0))
+    use_gdl = bool(args.edge or gdl_weight > 0)
+    criterion_gdl = GradientDifferenceLoss().to(Config.DEVICE) if use_gdl else None
 
     steps = 0
     max_steps = args.steps if args.steps is not None else Config.PRETRAIN_STEPS
@@ -255,6 +264,11 @@ def main():
                     loss_ssim = 1.0 - mssim_val
                 else:
                     loss_ssim = 0.0
+                # Optional GDL (Gradient Difference Loss - critical for sparse images)
+                if use_gdl and criterion_gdl is not None:
+                    loss_gdl = criterion_gdl(pred, images)
+                else:
+                    loss_gdl = 0.0
                 if args.fg_mask:
                     # Luminance in [-1,1] space converted to [0,1]
                     img_y = (images.clamp(-1.0,1.0) + 1.0) * 0.5
@@ -265,30 +279,65 @@ def main():
                     l1_loss = (w * (pred_y - img_y).abs()).mean()
                 else:
                     l1_loss = l1(pred, images)
-                # Scale perceptual component by perc_weight
+                # Combine all loss components
                 if isinstance(loss_perc, torch.Tensor):
-                    loss = perc_weight * loss_perc + l1_weight * l1_loss + (ssim_weight * loss_ssim if use_ssim else 0.0)
+                    loss = (perc_weight * loss_perc + l1_weight * l1_loss + 
+                            (ssim_weight * loss_ssim if use_ssim else 0.0) +
+                            (gdl_weight * loss_gdl if use_gdl else 0.0))
                 else:
-                    loss = l1_weight * l1_loss + (ssim_weight * loss_ssim if use_ssim else 0.0)
+                    loss = (l1_weight * l1_loss + 
+                            (ssim_weight * loss_ssim if use_ssim else 0.0) +
+                            (gdl_weight * loss_gdl if use_gdl else 0.0))
+                
+                # Anti-collapse: variance penalty
+                if getattr(Config, "USE_VARIANCE_PENALTY", False):
+                    # Penalize low-variance (flat) outputs
+                    output_var = pred.var(dim=[2, 3]).mean()  # Variance across spatial dims
+                    var_penalty = torch.exp(-output_var * 5.0)  # High penalty when var → 0
+                    var_weight = getattr(Config, "VARIANCE_PENALTY_WEIGHT", 1.0)
+                    loss = loss + var_weight * var_penalty
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
             sched.step()
             steps += 1
+            
+            # Diagnostic: Check for collapse
+            with torch.no_grad():
+                pred_std = pred.std().item()
+                pred_mean = pred.mean().item()
+                pred_min = pred.min().item()
+                pred_max = pred.max().item()
+                pred_range = pred_max - pred_min
+                
+                # ALARM if collapsed to constant!
+                if pred_std < 0.01 or pred_range < 0.05:
+                    print(f"\n⚠️  WARNING: Output collapsed at step {steps}!")
+                    print(f"   std={pred_std:.6f}, range=[{pred_min:.3f}, {pred_max:.3f}], mean={pred_mean:.3f}")
+                    if steps > 100:  # Allow some warmup
+                        print("   Stopping training to prevent wasted compute.")
+                        break
+            
             if steps % 50 == 0:
                 if wb is not None:
-                    wandb.log({
+                    log_dict = {
                         "pretrain/loss": float(loss.item()),
                         "pretrain/l1": float(l1_loss.item()),
                         "pretrain/perc": float(loss_perc if not isinstance(loss_perc, torch.Tensor) else loss_perc.item()),
                         "pretrain/ssim_loss": float(loss_ssim if not isinstance(loss_ssim, torch.Tensor) else loss_ssim.item()),
+                        "pretrain/gdl_loss": float(loss_gdl if not isinstance(loss_gdl, torch.Tensor) else loss_gdl.item()),
                         "pretrain/ssim_weight": float(ssim_weight),
+                        "pretrain/gdl_weight": float(gdl_weight),
                         "pretrain/perc_weight": perc_weight,
                         "pretrain/l1_weight": l1_weight,
+                        "pretrain/output_std": pred_std,
+                        "pretrain/output_range": pred_range,
+                        "pretrain/output_mean": pred_mean,
                         "lr": float(sched.get_last_lr()[0]),
                         "images_seen": steps * images.size(0),
-                    }, step=steps)
+                    }
+                    wandb.log(log_dict, step=steps)
                 # log last sample only, like main training (orig vs recon)
                 with torch.no_grad():
                     img_last = (images[-1:].detach() + 1.0) / 2.0
@@ -301,7 +350,7 @@ def main():
                 now = time.time()
                 img_per_s = (50 * images.size(0)) / max(1e-6, (now - last_log_t))
                 last_log_t = now
-                print(f"step {steps:6d} | loss {loss.item():.4f} | lr {sched.get_last_lr()[0]:.2e} | {img_per_s:.1f} img/s")
+                print(f"step {steps:6d} | loss {loss.item():.4f} | std {pred_std:.4f} | range [{pred_min:.2f}, {pred_max:.2f}] | lr {sched.get_last_lr()[0]:.2e} | {img_per_s:.1f} img/s")
             # Track best checkpoint
             if loss.item() < best_loss:
                 best_loss = loss.item()
@@ -309,20 +358,39 @@ def main():
             if steps >= max_steps:
                 break
 
+    # Save final models
     dec_path = os.path.join(run_dir, "pretrained_decoder_last.pth")
+    enc_path = os.path.join(run_dir, "pretrained_encoder_last.pth")
     torch.save(autoenc.decoder.state_dict(), dec_path)
+    torch.save(autoenc.encoder.state_dict(), enc_path)
     print(f"Saved pretrained decoder (last) to {dec_path}")
+    print(f"Saved pretrained encoder (last) to {enc_path}")
+    
     if os.path.exists(best_path):
         print(f"Best checkpoint saved to {best_path} (loss={best_loss:.4f})")
-        # Also export best to configured pretrained path for easy loading in train.py
-        target = getattr(Config, "PRETRAINED_DECODER_PATH", "pretrained_components/pretrained_decoder.pth")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        torch.save(autoenc.decoder.state_dict(), target)
-        print(f"Exported best decoder to {target}")
+        
+        # Export best decoder to configured path for easy loading in train.py
+        target_dec = getattr(Config, "PRETRAINED_DECODER_PATH", "pretrained_components/pretrained_decoder.pth")
+        os.makedirs(os.path.dirname(target_dec), exist_ok=True)
+        torch.save(autoenc.decoder.state_dict(), target_dec)
+        print(f"Exported best decoder to {target_dec}")
+        
+        # Export best encoder for use as domain-specific perceptual loss
+        target_enc = target_dec.replace("_decoder", "_encoder")
+        torch.save(autoenc.encoder.state_dict(), target_enc)
+        print(f"Exported best encoder to {target_enc}")
+        print(f"   → Use this encoder for Pathfinder-specific perceptual loss!")
+        
         if wb is not None:
-            art = wandb.Artifact("pretrained_decoder", type="model")
-            art.add_file(target)
-            wandb.log_artifact(art)
+            # Log both decoder and encoder as artifacts
+            art_dec = wandb.Artifact("pretrained_decoder", type="model")
+            art_dec.add_file(target_dec)
+            wandb.log_artifact(art_dec)
+            
+            art_enc = wandb.Artifact("pretrained_encoder", type="model")
+            art_enc.add_file(target_enc)
+            wandb.log_artifact(art_enc)
+            print("Logged decoder and encoder artifacts to W&B")
     if wb is not None:
         wandb.finish()
 

@@ -252,17 +252,37 @@ class ImageEncoderForPretrain(nn.Module):
     """
     def __init__(self, state_size: int, img_size=(32, 32)):
         super().__init__()
-        c1, c2, c3 = 96, 192, 128
+        # Wider channels for better feature extraction on sparse images
+        c1, c2, c3, c4 = 128, 256, 256, 192
         self.features = nn.Sequential(
-            nn.Conv2d(3, c1, 3, stride=2, padding=1), nn.BatchNorm2d(c1), nn.GELU(),
-            nn.Conv2d(c1, c2, 3, stride=2, padding=1), nn.BatchNorm2d(c2), nn.GELU(),
-            nn.Conv2d(c2, c3, 3, stride=2, padding=1), nn.BatchNorm2d(c3), nn.GELU(),
-            nn.Conv2d(c3, c3, 3, stride=1, padding=1), nn.BatchNorm2d(c3), nn.GELU(),
+            # 200×200 → 100×100
+            nn.Conv2d(3, c1, 3, stride=2, padding=1), 
+            nn.BatchNorm2d(c1), 
+            nn.GELU(),
+            
+            # 100×100 → 50×50
+            nn.Conv2d(c1, c2, 3, stride=2, padding=1), 
+            nn.BatchNorm2d(c2), 
+            nn.GELU(),
+            
+            # 50×50 → 25×25
+            nn.Conv2d(c2, c3, 3, stride=2, padding=1), 
+            nn.BatchNorm2d(c3), 
+            nn.GELU(),
+            
+            # 25×25 → 25×25 (refinement layers - no downsampling)
+            nn.Conv2d(c3, c3, 3, stride=1, padding=1), 
+            nn.BatchNorm2d(c3), 
+            nn.GELU(),
+            
+            nn.Conv2d(c3, c4, 3, stride=1, padding=1), 
+            nn.BatchNorm2d(c4), 
+            nn.GELU(),
         )
-        # Fixed spatial size before FC for arbitrary input sizes
-        self.adapt_pool = nn.AdaptiveAvgPool2d((4, 4))
+        # Larger spatial map before pooling to preserve thin structures
+        self.adapt_pool = nn.AdaptiveAvgPool2d((6, 6))
         self.flatten = nn.Flatten()
-        self.fc = nn.Linear(c3 * 4 * 4, state_size)
+        self.fc = nn.Linear(c4 * 6 * 6, state_size)
 
     def forward(self, x):
         x = self.features(x)
@@ -314,4 +334,50 @@ class PerceptualLoss(nn.Module):
         x_vgg = self.vgg_slice(x_in)
         y_vgg = self.vgg_slice(y_in)
         loss = nn.functional.mse_loss(x_vgg, y_vgg)
+        return loss
+
+
+class GradientDifferenceLoss(nn.Module):
+    """Gradient Difference Loss (GDL) for sharp image reconstruction.
+    (https://arxiv.org/pdf/1511.05440)
+    we basically just compare the differences between adjacent pixels
+    """
+    def __init__(self, alpha: float = 1.0):
+        """
+        Args:
+            alpha: Exponent for gradient differences.
+                   1.0 = L1 distance (sharper, recommended by paper)
+                   2.0 = L2 distance (smoother)
+        """
+        super().__init__()
+        self.alpha = alpha
+    
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred: Predicted image (B, C, H, W) in [-1, 1]
+            target: Ground truth image (B, C, H, W) in [-1, 1]
+            
+        Returns:
+            Gradient difference loss (scalar)
+        """
+        # Compute horizontal gradients (differences along width dimension)
+        pred_dx = torch.abs(pred[:, :, :, 1:] - pred[:, :, :, :-1])
+        target_dx = torch.abs(target[:, :, :, 1:] - target[:, :, :, :-1])
+        
+        # Compute vertical gradients (differences along height dimension)
+        pred_dy = torch.abs(pred[:, :, 1:, :] - pred[:, :, :-1, :])
+        target_dy = torch.abs(target[:, :, 1:, :] - target[:, :, :-1, :])
+        
+        # Compute gradient differences
+        grad_diff_x = torch.abs(pred_dx - target_dx)
+        grad_diff_y = torch.abs(pred_dy - target_dy)
+        
+        # Apply exponent if alpha != 1.0
+        if self.alpha != 1.0:
+            grad_diff_x = torch.pow(grad_diff_x, self.alpha)
+            grad_diff_y = torch.pow(grad_diff_y, self.alpha)
+        
+        # Return mean gradient difference
+        loss = torch.mean(grad_diff_x) + torch.mean(grad_diff_y)
         return loss
