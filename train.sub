@@ -25,12 +25,13 @@ log                     = condor_logs/train.$(Cluster).$(Process).log
 output                  = condor_logs/train.$(Cluster).$(Process).out.log
 error                   = condor_logs/train.$(Cluster).$(Process).err.log
 request_gpus            = 1
-request_cpus            = 6
-request_memory          = 12 GB
+request_cpus            = 2
+request_memory          = 8 GB
 getenv                  = True
 stream_output           = True
 stream_error            = True
 requirements            = (CUDADeviceName =!= UNDEFINED)
+require_gpus = Capability >= 8.0
 
 # Optional: route temporary files and pip cache to data/scratch to avoid HOME quota
 TMPDIR                  = 
