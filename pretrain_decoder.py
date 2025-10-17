@@ -342,7 +342,11 @@ def main():
                 with torch.no_grad():
                     img_last = (images[-1:].detach() + 1.0) / 2.0
                     pred_last = (pred[-1:].detach().clamp(-1, 1) + 1.0) / 2.0
-                    grid = vutils.make_grid(torch.cat([img_last, pred_last], dim=0), nrow=2, normalize=True)
+                    grid = vutils.make_grid(
+                        torch.cat([img_last, pred_last], dim=0),
+                        nrow=2,
+                        normalize=False,
+                    )
                 if wb is not None:
                     wandb.log({
                         "pretrain/orig_vs_recon": [wandb.Image(grid, caption=f"step {steps}")],
