@@ -397,12 +397,15 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
 
                 # Compute L1 loss with optional foreground masking
                 if use_fg_mask:
+                    # Convert from [-1,1] to [0,1] for luminance computation
+                    img_01 = (image + 1.0) / 2.0
+                    recon_01 = (reconstruction + 1.0) / 2.0
                     # Compute luminance for foreground detection
-                    img_y = 0.2989 * image[:,0:1] + 0.5870 * image[:,1:2] + 0.1140 * image[:,2:3]
-                    recon_y = 0.2989 * reconstruction[:,0:1] + 0.5870 * reconstruction[:,1:2] + 0.1140 * reconstruction[:,2:3]
+                    img_y = 0.2989 * img_01[:,0:1] + 0.5870 * img_01[:,1:2] + 0.1140 * img_01[:,2:3]
+                    recon_y = 0.2989 * recon_01[:,0:1] + 0.5870 * recon_01[:,1:2] + 0.1140 * recon_01[:,2:3]
                     # Create weight mask: foreground=1.0, background=bg_weight
                     w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
-                    # Apply weight to L1 error
+                    # Apply weight to L1 error (in [0,1] space)
                     l1_step = (w * (recon_y - img_y).abs()).mean() * weight + l1_m
                 else:
                     l1_step = l1_loss(reconstruction, image) * weight + l1_m
@@ -466,8 +469,11 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
             
             # Compute L1 loss with optional foreground masking
             if use_fg_mask:
-                img_y = 0.2989 * image[:,0:1] + 0.5870 * image[:,1:2] + 0.1140 * image[:,2:3]
-                final_y = 0.2989 * final_recon[:,0:1] + 0.5870 * final_recon[:,1:2] + 0.1140 * final_recon[:,2:3]
+                # Convert from [-1,1] to [0,1] for luminance computation
+                img_01 = (image + 1.0) / 2.0
+                final_01 = (final_recon + 1.0) / 2.0
+                img_y = 0.2989 * img_01[:,0:1] + 0.5870 * img_01[:,1:2] + 0.1140 * img_01[:,2:3]
+                final_y = 0.2989 * final_01[:,0:1] + 0.5870 * final_01[:,1:2] + 0.1140 * final_01[:,2:3]
                 w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
                 final_l1 = (w * (final_y - img_y).abs()).mean()
             else:

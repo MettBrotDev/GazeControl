@@ -44,14 +44,14 @@ class Config:
     GAZE_BOUND_FRACTION = 0.1
 
     # Reconstruction loss
-    L1_WEIGHT = 0.7
-    PERC_WEIGHT = 0.001
-    SSIM_WEIGHT = 0.5           # MS-SSIM structural loss weight
+    L1_WEIGHT = 1.0
+    PERC_WEIGHT = 0.002            # Perceptual loss (VGG)
+    SSIM_WEIGHT = 0.1              # MS-SSIM structural loss weight
     
     # Foreground masking for L1 loss
-    USE_FG_MASK = True         # Enable foreground-weighted L1 loss
-    FG_THRESH = 0.1            # Brightness threshold for foreground (0-1)
-    BG_WEIGHT = 0.3            # Relative weight for background pixels
+    USE_FG_MASK = True             # Enable foreground-weighted L1 loss
+    FG_THRESH = 0.1                # Brightness threshold for foreground (0-1)
+    BG_WEIGHT = 0.2                # Relative weight for background pixels
 
     # Step loss
     USE_MASKED_STEP_LOSS = True
