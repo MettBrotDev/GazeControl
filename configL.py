@@ -9,7 +9,7 @@ class Config:
     LEARNING_RATE = 2e-4        # Higher LR for random init decoder
     WEIGHT_DECAY = 1e-4
     GRAD_CLIP_NORM = 1.0        # Looser clipping for exploration
-    BATCH_SIZE = 32
+    BATCH_SIZE = 64
 
     # Model dims
     HIDDEN_SIZE = 2048               # LSTM hidden size (was 3072 = 126M LSTM params!)
@@ -53,23 +53,26 @@ class Config:
     FG_THRESH = 0.10               # Lower threshold for early learning
     BG_WEIGHT = 0.05               # 20:1 ratio (less extreme for random decoder)
     
-    # Anti-collapse: variance penalty
+    # Anti-collapse: variance penalty + latent norm
     USE_VARIANCE_PENALTY = True    # Penalize uniform/low-variance outputs
     VARIANCE_PENALTY_WEIGHT = 1.0  # Strong penalty for collapse
+    USE_LATENT_NORM_PENALTY = True # Penalize near-zero latent codes
+    LATENT_NORM_MIN = 0.5          # Minimum expected L2 norm of latent vector
+    LATENT_NORM_PENALTY_WEIGHT = 1.0  # Strong penalty to push out of collapse basin
 
     # Step loss
-    USE_MASKED_STEP_LOSS = False
+    USE_MASKED_STEP_LOSS = True
     STEP_LOSS_MIN = 0.05           # Increased from 0.02 - stronger early supervision
     STEP_LOSS_MAX = 0.5            # Increased from 0.35 - stronger late supervision
-    FINAL_LOSS_MULT = 10.0         # Increased from 8.0 - emphasize final reconstruction
+    FINAL_LOSS_MULT = 8.0         # Increased from 8.0 - emphasize final reconstruction
     STEP_MASK_SIGMA_SCALE = 0.35
 
     # Pretrained artifacts
     PRETRAIN_STEPS = 200000
     PRETRAIN_LR = 2e-3
     PRETRAIN_BATCH_SIZE = 16        # larger images -> smaller batch
-    FREEZE_DECODER_EPOCHS = 0       # NEVER freeze - must adapt from start
-    PRETRAINED_DECODER_PATH = ""    # Train from scratch with bias init
+    FREEZE_DECODER_EPOCHS = 1       
+    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_L.pth"  # Pathfinder-trained decoder
     PRETRAIN_L1_WEIGHT = 20.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
