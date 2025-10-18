@@ -19,7 +19,7 @@ NO_PERC_FLAG            =
 PERC_RESIZE_FLAG        = 
 PERC_WEIGHT_FLAG        = 
 SINGLE_FLAG             = 
-EXTRA_ARGS              = --fg-mask --fg-thresh 0.05 --bg-weight 0.05 --no-var-penalty
+EXTRA_ARGS              = --fg-mask --fg-thresh 0.05 --bg-weight 0.05
 
 universe                = vanilla
 executable              = $(PYTHON)
