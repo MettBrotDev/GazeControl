@@ -44,7 +44,6 @@ def main():
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
     parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
-    parser.add_argument("--no-var-penalty", action="store_true", help="Disable variance penalty during pretraining regardless of config")
     args = parser.parse_args()
 
     # Dynamically load config if requested
@@ -219,10 +218,6 @@ def main():
     perc_weight = float(_perc_cli) if _perc_cli is not None else float(getattr(Config, "PRETRAIN_PERC_WEIGHT", 0.0))
     l1 = nn.L1Loss(reduction="mean")
 
-    def total_variation(x):
-        tv_h = (x[:, :, 1:, :] - x[:, :, :-1, :]).abs().mean()
-        tv_w = (x[:, :, :, 1:] - x[:, :, :, :-1]).abs().mean()
-        return tv_h + tv_w
     use_amp = bool(getattr(Config, "PRETRAIN_USE_AMP", True))
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
     # MS-SSIM enable + weight
