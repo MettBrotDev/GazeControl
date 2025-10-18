@@ -208,6 +208,7 @@ class GazeControlModel(nn.Module):
 
 class Agent(nn.Module):
     """Actor-Critic head that consumes LSTM hidden state and gaze context.
+    Provides both movement policy (8-way) and a binary decision policy (connected vs not).
     """
     def __init__(self, state_size: int, pos_encoding_dim: int, num_actions: int = 8):
         super().__init__()
@@ -224,10 +225,17 @@ class Agent(nn.Module):
         )
 
         # Policy and value heads operate on shared features
+        # Movement policy: 8 directions
         self.policy_head = nn.Sequential(
             nn.Linear(shared_hidden, head_hidden),
             nn.ReLU(),
             nn.Linear(head_hidden, num_actions),
+        )
+        # Decision policy: 2 classes (connected vs disconnected)
+        self.decision_head = nn.Sequential(
+            nn.Linear(shared_hidden, head_hidden),
+            nn.ReLU(),
+            nn.Linear(head_hidden, 2),
         )
         self.value_head = nn.Sequential(
             nn.Linear(shared_hidden, head_hidden),
@@ -239,9 +247,19 @@ class Agent(nn.Module):
         pe = create_spatial_position_encoding(gaze, self.pos_dim)
         rl_in = torch.cat([h, pe, gaze], dim=1)
         shared = self.shared(rl_in)
-        logits = self.policy_head(shared)
+        move_logits = self.policy_head(shared)
         value = self.value_head(shared).squeeze(-1)
-        return logits, value
+        return move_logits, value
+
+    def policy_value_both(self, h: torch.Tensor, gaze: torch.Tensor):
+        """Return move policy logits (B,8), decision logits (B,2), and value (B,)."""
+        pe = create_spatial_position_encoding(gaze, self.pos_dim)
+        rl_in = torch.cat([h, pe, gaze], dim=1)
+        shared = self.shared(rl_in)
+        move_logits = self.policy_head(shared)
+        decision_logits = self.decision_head(shared)
+        value = self.value_head(shared).squeeze(-1)
+        return move_logits, decision_logits, value
 
 
 class ImageEncoderForPretrain(nn.Module):
