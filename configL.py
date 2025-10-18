@@ -47,7 +47,7 @@ class Config:
     L1_WEIGHT = 1.0
     PERC_WEIGHT = 0.01             # Moderate perceptual loss
     SSIM_WEIGHT = 0.5              # Moderate structural loss
-    GDL_WEIGHT = 1.0               # Gradient Difference Loss disabled
+    GDL_WEIGHT = 10.0               # Gradient Difference Loss
     
     # Foreground masking for L1 loss - less extreme for exploration
     USE_FG_MASK = True             # Enable foreground-weighted L1 loss

@@ -10,3 +10,4 @@ pretrained_components/
 gaze_control_model_local.pth
 pipcache/
 condor_logs/
+wandb/

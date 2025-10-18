@@ -13,20 +13,20 @@ class Config:
     BATCH_SIZE = 128
 
     # Model dims (lightweight)
-    HIDDEN_SIZE = 512
-    ENCODER_C1 = 24
-    ENCODER_C2 = 48
+    HIDDEN_SIZE = 128
+    ENCODER_C1 = 12
+    ENCODER_C2 = 24
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # 2x2 pooled features
     POS_ENCODING_DIM = 32
     LSTM_LAYERS = 1
 
     # Multi-scale glimpses
     K_SCALES = 2                   # use 2 scales for maze
-    FUSION_TO_DIM = 256
-    FUSION_HIDDEN_MUL = 2.0
+    FUSION_TO_DIM = 128
+    FUSION_HIDDEN_MUL = 1.5
 
     # Decoder
-    DECODER_LATENT_CH = 64
+    DECODER_LATENT_CH = 24
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     # Data: point at Maze dataset images
@@ -37,14 +37,14 @@ class Config:
     CIFAR100_DATA_DIR = "./Data/cifar100"
 
     # Rollout
-    MAX_STEPS = 12
-    MAX_MOVE = 0.25
+    MAX_STEPS = 20
+    MAX_MOVE = 0.15
     USE_GAZE_BOUNDS = True
-    GAZE_BOUND_FRACTION = 0.10
+    GAZE_BOUND_FRACTION = 0.05
 
     # Reconstruction losses (L1-dominant). SSIM off for tiny images.
     L1_WEIGHT = 1.0
-    PERC_WEIGHT = 0.0               # Perceptual loss not helpful at 24x24
+    PERC_WEIGHT = 0.0                
     SSIM_WEIGHT = 0.0
     GDL_WEIGHT = 1.0                # Useful for sharp edges in mazes
 
@@ -60,11 +60,11 @@ class Config:
     PRETRAIN_LR = 3e-3
     PRETRAIN_BATCH_SIZE = 128
     FREEZE_DECODER_EPOCHS = 0
-    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_small.pth"
+    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_maze.pth"
     PRETRAIN_L1_WEIGHT = 1.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
-    PRETRAIN_PERC_WEIGHT = 0.0
+    PRETRAIN_PERC_WEIGHT = 0.01
     PRETRAIN_SSIM_WEIGHT = 0.0
 
     PRETRAINED_MODEL_PATH = ""  # not used

@@ -26,7 +26,7 @@ import importlib
 from torch.distributions import Categorical
 import matplotlib.pyplot as plt
 
-from models import GazeControlModel, Agent, PerceptualLoss
+from models import GazeControlModel, Agent, PerceptualLoss, GradientDifferenceLoss
 from config import Config          
 import json
 
@@ -305,6 +305,9 @@ def train(
     # MS-SSIM loss
     ssim_weight = float(getattr(Config, 'SSIM_WEIGHT', 0.0))
     use_ssim = ssim_weight > 0.0
+    # Gradient Difference Loss (GDL) for sharp edges
+    gdl_weight = float(getattr(Config, 'GDL_WEIGHT', 0.0))
+    criterion_gdl = GradientDifferenceLoss().to(Config.DEVICE) if gdl_weight > 0.0 else None
     # Foreground mask for L1 loss
     use_fg_mask = bool(getattr(Config, 'USE_FG_MASK', False))
     fg_thresh = float(getattr(Config, 'FG_THRESH', 0.1))
@@ -450,7 +453,17 @@ def train(
                 else:
                     ssim_step = 0.0
 
-                rec_error = l1_weight * l1_step + (ssim_weight * ssim_step if use_ssim else 0.0)
+                # Optional GDL per-step
+                if criterion_gdl is not None:
+                    gdl_step = criterion_gdl(reconstruction, image) * weight
+                else:
+                    gdl_step = 0.0
+
+                rec_error = (
+                    l1_weight * l1_step
+                    + (ssim_weight * ssim_step if use_ssim else 0.0)
+                    + (gdl_weight * gdl_step if criterion_gdl is not None else 0.0)
+                )
 
                 total_rec_loss = total_rec_loss + rec_error
 
@@ -529,6 +542,11 @@ def train(
                 # MS-SSIM expects inputs in [-1,1] range, set data_range=2.0
                 mssim_val = ms_ssim(final_recon, image, data_range=2.0, size_average=True)
                 final_ssim = 1.0 - mssim_val
+
+            # Optional GDL on final reconstruction
+            final_gdl = None
+            if criterion_gdl is not None:
+                final_gdl = criterion_gdl(final_recon, image)
             
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
             final_loss = l1_weight * final_l1 * final_mult
@@ -536,6 +554,8 @@ def train(
                 final_loss = final_loss + perc_weight * final_perc * final_mult
             if final_ssim is not None and ssim_weight > 0.0:
                 final_loss = final_loss + ssim_weight * final_ssim * final_mult
+            if final_gdl is not None and gdl_weight > 0.0:
+                final_loss = final_loss + gdl_weight * final_gdl * final_mult
 
             # Final decision from agent (connected vs not) using last hidden state and gaze
             h_T = state[0][-1]
@@ -625,6 +645,8 @@ def train(
                     logs["loss/perc"] = float(final_perc.item())
                 if final_ssim is not None:
                     logs["loss/ssim"] = float(final_ssim.item())
+                if 'final_gdl' in locals() and final_gdl is not None:
+                    logs["loss/gdl_final"] = float(final_gdl.item())
                 # Log classification loss
                 if cls_enabled:
                     logs["loss/cls"] = float(cls_loss.item())
