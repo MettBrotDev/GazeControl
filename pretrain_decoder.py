@@ -290,13 +290,6 @@ def main():
                             (ssim_weight * loss_ssim if use_ssim else 0.0) +
                             (gdl_weight * loss_gdl if use_gdl else 0.0))
                 
-                # Anti-collapse: variance penalty
-                if getattr(Config, "USE_VARIANCE_PENALTY", False) and not args.no_var_penalty:
-                    # Penalize low-variance (flat) outputs
-                    output_var = pred.var(dim=[2, 3]).mean()  # Variance across spatial dims
-                    var_penalty = torch.exp(-output_var * 5.0)  # High penalty when var → 0
-                    var_weight = getattr(Config, "VARIANCE_PENALTY_WEIGHT", 1.0)
-                    loss = loss + var_weight * var_penalty
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
