@@ -37,9 +37,9 @@ def main():
     # MS-SSIM options
     parser.add_argument("--ssim", action="store_true", help="Add MS-SSIM structural loss term (1 - MS-SSIM)")
     parser.add_argument("--ssim-weight", type=float, default=None, help="Weight for SSIM term; overrides Config.PRETRAIN_SSIM_WEIGHT")
-    # Edge loss for sparse/structural images
-    parser.add_argument("--edge", action="store_true", help="Add edge/gradient loss (critical for Pathfinder)")
-    parser.add_argument("--edge-weight", type=float, default=None, help="Weight for edge term")
+    # GDL for sparse/structural images (Gradient Difference Loss)
+    parser.add_argument("--gdl", action="store_true", help="Add gradient difference loss (GDL)")
+    parser.add_argument("--gdl-weight", type=float, default=None, help="Weight for GDL term")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
@@ -231,9 +231,9 @@ def main():
     use_ssim = bool(args.ssim or ssim_weight > 0)
     
     # Gradient Difference Loss (GDL) from Mathieu et al. 2016
-    _gdl_cli = getattr(args, "edge_weight", None)  # Keep CLI arg name for backward compat
+    _gdl_cli = getattr(args, "gdl_weight", None)
     gdl_weight = float(_gdl_cli) if _gdl_cli is not None else float(getattr(Config, "GDL_WEIGHT", 0.0))
-    use_gdl = bool(args.edge or gdl_weight > 0)
+    use_gdl = bool(getattr(args, "gdl", False) or gdl_weight > 0)
     criterion_gdl = GradientDifferenceLoss().to(Config.DEVICE) if use_gdl else None
 
     steps = 0
@@ -304,21 +304,15 @@ def main():
             sched.step()
             steps += 1
             
-            # Diagnostic: Check for collapse
+            # Compute stable FP32 output stats for logging (no collapse check)
             with torch.no_grad():
-                pred_std = pred.std().item()
-                pred_mean = pred.mean().item()
-                pred_min = pred.min().item()
-                pred_max = pred.max().item()
+                pred_fp32 = pred.detach().float()
+                img_fp32 = images.detach().float()
+                pred_std = pred_fp32.std().item()
+                pred_mean = pred_fp32.mean().item()
+                pred_min = pred_fp32.min().item()
+                pred_max = pred_fp32.max().item()
                 pred_range = pred_max - pred_min
-                
-                # ALARM if collapsed to constant!
-                if pred_std < 0.01 or pred_range < 0.05:
-                    print(f"\n⚠️  WARNING: Output collapsed at step {steps}!")
-                    print(f"   std={pred_std:.6f}, range=[{pred_min:.3f}, {pred_max:.3f}], mean={pred_mean:.3f}")
-                    if steps > 100:  # Allow some warmup
-                        print("   Stopping training to prevent wasted compute.")
-                        break
             
             if steps % 50 == 0:
                 if wb is not None:
