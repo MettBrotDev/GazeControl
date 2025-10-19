@@ -4,7 +4,7 @@ class Config:
     # Keep fovea/crop tiny for speed; single-scale is fine here
     FOVEA_OUTPUT_SIZE = (4, 4)      # encoder input size per scale
     FOVEA_CROP_SIZE = (4, 4)    # base crop; multi-scale uses 4,8
-    EPOCHS = 50
+    EPOCHS = 80
 
     # Training hyperparameters (small problem)
     LEARNING_RATE = 3e-4
@@ -17,7 +17,7 @@ class Config:
     ENCODER_C1 = 12
     ENCODER_C2 = 24
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # 2x2 pooled features
-    POS_ENCODING_DIM = 32
+    POS_ENCODING_DIM = 64
     LSTM_LAYERS = 1
 
     # Multi-scale glimpses
@@ -59,7 +59,7 @@ class Config:
     PRETRAIN_STEPS = 20000
     PRETRAIN_LR = 3e-3
     PRETRAIN_BATCH_SIZE = 128
-    FREEZE_DECODER_EPOCHS = 0
+    FREEZE_DECODER_EPOCHS = 1
     PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_maze.pth"
     PRETRAIN_L1_WEIGHT = 1.0
     PRETRAIN_MSE_WEIGHT = 0.0
