@@ -677,6 +677,12 @@ def train(
                     orig_np = ((image[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
                     # Use final_recon instead of intermediate reconstruction
                     recon_np = ((final_recon[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
+                    # Compute final decision for first sample and confidence
+                    with torch.no_grad():
+                        probs = torch.softmax(decision_logits_T, dim=1)
+                        pred0 = int(probs[0].argmax().item())
+                        conf0 = float(probs[0, pred0].item())
+                        true0 = int(labels[0].item())
                     # Build combined figure
                     fig, axs = plt.subplots(1, 2, figsize=(8, 4))
                     # Left: Original with gaze path
@@ -691,6 +697,10 @@ def train(
                     # Right: Final step reconstruction
                     axs[1].imshow(recon_np)
                     axs[1].set_title('Reconstruction (final step)')
+                    # Overlay prediction vs truth text box
+                    txt = f"pred={pred0}  p={conf0*100:.1f}%  true={true0}"
+                    axs[1].text(0.02, 0.98, txt, transform=axs[1].transAxes, va='top', ha='left',
+                                color='white', bbox=dict(facecolor='black', alpha=0.6, boxstyle='round,pad=0.3'), fontsize=9)
                     axs[1].axis('off')
                     plt.tight_layout()
                     if wb is not None:
