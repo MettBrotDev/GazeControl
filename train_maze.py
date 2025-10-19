@@ -369,10 +369,18 @@ def train(
             image = images.to(Config.DEVICE)
             labels = labels.to(Config.DEVICE)
             
-            # Start with random initial gaze position
+            # Start gaze position
             num_steps = Config.MAX_STEPS
             B = image.size(0)
-            gaze = torch.rand(B, 2, device=Config.DEVICE) * 0.4 + 0.3  # Start in central 40% area
+            if hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
+                base = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1)
+                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+                if jitter_r > 0.0:
+                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
+                    base = base + jitter
+                gaze = base.clamp(0.0, 1.0)
+            else:
+                gaze = torch.rand(B, 2, device=Config.DEVICE) * 0.4 + 0.3  # central 40%
 
             # Initialize LSTM memory
             state = model.init_memory(B, Config.DEVICE)

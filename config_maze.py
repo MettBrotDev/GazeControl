@@ -39,7 +39,7 @@ class Config:
     # Rollout
     MAX_STEPS = 20
     MAX_MOVE = 0.15
-    USE_GAZE_BOUNDS = True
+    USE_GAZE_BOUNDS = False  # allow exploration to image borders for maze start at top-left
     GAZE_BOUND_FRACTION = 0.05
 
     # Reconstruction losses (L1-dominant). SSIM off for tiny images.
@@ -68,6 +68,8 @@ class Config:
     PRETRAIN_SSIM_WEIGHT = 0.0
 
     PRETRAINED_MODEL_PATH = ""  # not used
+    # Warm-start for RL: set this to your recon-only checkpoint (e.g., gaze_control_model_local.pth)
+    PRETRAINED_MODEL_PATH = "gaze_control_model_local.pth"
 
     # Use local Maze dir in training scripts
     DATA_SOURCE = "local"
@@ -85,6 +87,10 @@ class Config:
     RL_NORM_ADV = True
 
     RL_ONLY_EPOCHS = 0
+
+    # Initial gaze position control (normalized [0,1]): use top-left start with optional small jitter
+    START_GAZE = (0.05, 0.05)    # set to None for random center start; (0,0) is exact corner
+    START_JITTER = 0.02          # uniform jitter radius around START_GAZE; set 0.0 for fixed
 
     @classmethod
     def get_local_data_dirs(cls):
