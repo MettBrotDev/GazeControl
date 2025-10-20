@@ -85,6 +85,8 @@ class Config:
     RL_INIT_STD = 0.2
     RL_REWARD_SCALE = 20.0
     RL_NORM_ADV = True
+    # Small per-step time penalty to encourage stopping early when useful
+    RL_STEP_PENALTY = 0.01
 
     RL_ONLY_EPOCHS = 0
 
