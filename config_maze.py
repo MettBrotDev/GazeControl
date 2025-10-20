@@ -79,7 +79,7 @@ class Config:
     RL_LAMBDA = 0.95
     RL_POLICY_LR = 3e-4
     RL_VALUE_COEF = 0.5
-    RL_ENTROPY_COEF = 0.04
+    RL_ENTROPY_COEF = 0.02
     RL_LOSS_WEIGHT = 1.0
     RL_CLIP_ACTION = True
     RL_INIT_STD = 0.2
@@ -89,7 +89,7 @@ class Config:
     # Small per-step time penalty to encourage stopping early when useful
     RL_STEP_PENALTY = 0.01
 
-    RL_ONLY_EPOCHS = 0
+    RL_ONLY_EPOCHS = 1
 
     # Initial gaze position control (normalized [0,1]): use top-left start with optional small jitter
     START_GAZE = (0.05, 0.05)    # set to None for random center start; (0,0) is exact corner

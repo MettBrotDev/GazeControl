@@ -655,8 +655,9 @@ def train(
                 batch_arange = torch.arange(labels.size(0), device=Config.DEVICE)
                 ls_clamped = ls.clamp_min(0).clamp_max(max_Steps - 1)
                 # Additional penalty for not executing all steps if final decision is wrong
+                # This is scaled super high to strongly encourage running to full length when unsure
                 incorrect = (preds != labels).float()
-                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float() 
+                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 100
                 rewards_t[ls_clamped, batch_arange] = rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
 
                 with torch.no_grad():
