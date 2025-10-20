@@ -87,7 +87,7 @@ class Config:
     RL_NORM_ADV = True
     RL_STOP_INIT_BIAS = -8.0      # stronger negative initialization for stop action
     # Small per-step time penalty to encourage stopping early when useful
-    RL_STEP_PENALTY = 0.01
+    RL_STEP_PENALTY = 0.01 #maybe lower it to 0.005 for next training
 
     RL_ONLY_EPOCHS = 1
 

@@ -1,0 +1,125 @@
+\documentclass[msc]{thesis}
+%\documentclass[msc]{thesis}
+
+\authorfirstname{Firstname}
+\authorlastname{Lastname}
+
+\reviewer{Gutachter}{
+    \referentname{Prof.~Dr.~Martin Butz}\\
+    \referentinstitute{
+        Kognitive Modellierung\\
+        Wilhelm-Schickard-Institut für Informatik\\
+        Universität Tübingen
+    }\\
+	[0.3cm]
+    \referentname{Prof.~Dr.~Nitram Ztub}\\
+    \referentinstitute{
+        Kognitive Modellierung\\
+        Wilhelm-Schickard-Institut für Informatik\\
+        Universität Tübingen
+    }
+}
+
+% optional
+\supervisor{Betreuer}{
+    \referentname{Dr.~Vorname Nachname}\\
+    \referentinstitute{
+        Kognitive Modellierung\\
+        Wilhelm-Schickard-Institut für Informatik\\
+        Universität Tübingen
+    }
+}
+
+
+\course{Kognitionswissenschaft}
+%\course{Informatik}
+%\course{Weltrauminformatik
+
+\title{This is a Fancy Topic}
+\date{\today}
+\editingperiod{01.01.2019 -- 01.04.2019}
+
+\setlength\cftbeforechapskip{2pt}
+
+\makeatletter
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+\hypersetup{
+    bookmarksopen={true},
+    bookmarksopenlevel={0},
+    bookmarksnumbered={true},
+    breaklinks={true},
+    colorlinks={false},
+    pdfpagemode={UseOutlines},
+    pdftitle={\@title},
+    pdfauthor={\@author},
+    pdfsubject={\thethesistype},
+    pdfview={FitV},
+    pdffitwindow={true},
+    pdfstartview={FitV},
+    pdfnewwindow={false},
+    pdfdisplaydoctitle={true},
+    pdfhighlight={/P},
+    plainpages={false},
+    unicode={true},
+    urlcolor={blue}
+}
+
+\makeatother
+
+\begin{document}
+\frontmatter
+
+\selectlanguage{ngerman}
+
+\maketitle
+
+\selectlanguage{english}
+\include{misc/abstract}
+
+\selectlanguage{ngerman}
+\include{misc/kurzfassung}
+
+\selectlanguage{english}
+
+\tableofcontents
+
+
+\mainmatter
+
+\selectlanguage{english}
+
+%----------------------------------------------------------------
+% Content
+%----------------------------------------------------------------
+
+\include{chapter/introduction}
+\include{chapter/foundations}
+\include{chapter/conclusion}
+
+
+%----------------------------------------------------------------
+% appendix chapter format
+%----------------------------------------------------------------
+\appendix
+
+\include{chapter/appendices}   
+
+\backmatter
+
+%----------------------------------------------------------------
+% abbreviations
+%----------------------------------------------------------------
+
+\include{misc/abbreviations}
+
+%----------------------------------------------------------------
+% bibliography
+%----------------------------------------------------------------
+
+\bibliographystyle{natbib}
+\bibliography{thesis}
+
+\include{misc/statement}
+
+\end{document}
