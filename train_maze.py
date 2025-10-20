@@ -511,6 +511,7 @@ def train(
                 else:
                     # Dont stop when using random policy
                     move_idx = torch.randint(low=0, high=8, size=(gaze.shape[0],), device=Config.DEVICE)
+                    stop_sample = torch.zeros(gaze.shape[0], device=Config.DEVICE)
 
                 # Continuation mask for next step
                 cont_mask = alive_mask & (stop_sample < 0.5)
@@ -618,10 +619,25 @@ def train(
                 scale = float(getattr(Config, 'RL_REWARD_SCALE', 1.0))
                 preds = final_decision_logits.argmax(dim=1)
                 r_final = (preds == labels).float() * scale  # (B,)
-                values_t = torch.stack(values)      # (T,B)
-                logprobs_t = torch.stack(logprobs)  # (T,B)
-                entropies_t = torch.stack(entropies)  # (T,B)
+
+                # Stack per-step tensors with executed length T, then pad to MAX_STEPS for safe indexing/masking
+                values_t_exec = torch.stack(values)      # (T,B)
+                logprobs_t_exec = torch.stack(logprobs)  # (T,B)
+                entropies_t_exec = torch.stack(entropies)  # (T,B)
+                T_exec = values_t_exec.size(0)
                 max_Steps = int(getattr(Config, 'MAX_STEPS', 20))
+
+                def pad_to_max(t_TB):
+                    if t_TB.size(0) == max_Steps:
+                        return t_TB
+                    pad_len = max_Steps - t_TB.size(0)
+                    pad = torch.zeros((pad_len, *t_TB.shape[1:]), device=t_TB.device, dtype=t_TB.dtype)
+                    return torch.cat([t_TB, pad], dim=0)
+
+                values_t = pad_to_max(values_t_exec)          # (max_Steps,B)
+                logprobs_t = pad_to_max(logprobs_t_exec)      # (max_Steps,B)
+                entropies_t = pad_to_max(entropies_t_exec)    # (max_Steps,B)
+
                 rewards_t = torch.zeros((max_Steps, labels.size(0)), device=Config.DEVICE)
                 # Per-step time penalty to encourage shorter trajectories
                 # Also additionally penalize taking less steps when final classification is wrong
@@ -629,8 +645,8 @@ def train(
                 ls = last_step.clone()
                 ls[ls < 0] = max_Steps - 1
                 t_idx = torch.arange(max_Steps, device=Config.DEVICE).unsqueeze(1)  # (T,1)
-                exec_masks_t = (t_idx <= ls.unsqueeze(0)).to(values_t.dtype)  # (T,B)
-                cont_masks_t = (t_idx < ls.unsqueeze(0)).to(values_t.dtype)   # (T,B)
+                exec_masks_t = (t_idx <= ls.unsqueeze(0)).to(values_t.dtype)  # (max_Steps,B)
+                cont_masks_t = (t_idx < ls.unsqueeze(0)).to(values_t.dtype)   # (max_Steps,B)
                 # Per-step time penalty on each executed step
                 if step_pen != 0.0:
                     rewards_t = rewards_t - step_pen * exec_masks_t
