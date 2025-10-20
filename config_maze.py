@@ -79,12 +79,13 @@ class Config:
     RL_LAMBDA = 0.95
     RL_POLICY_LR = 3e-4
     RL_VALUE_COEF = 0.5
-    RL_ENTROPY_COEF = 0.02
+    RL_ENTROPY_COEF = 0.04
     RL_LOSS_WEIGHT = 1.0
     RL_CLIP_ACTION = True
     RL_INIT_STD = 0.2
     RL_REWARD_SCALE = 20.0
     RL_NORM_ADV = True
+    RL_STOP_INIT_BIAS = -8.0      # stronger negative initialization for stop action
     # Small per-step time penalty to encourage stopping early when useful
     RL_STEP_PENALTY = 0.01
 

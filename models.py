@@ -210,7 +210,7 @@ class Agent(nn.Module):
     """Actor-Critic head that consumes LSTM hidden state and gaze context.
     Provides movement policy (8-way), a STOP head (Bernoulli), and a binary decision policy (connected vs not).
     """
-    def __init__(self, state_size: int, pos_encoding_dim: int, num_actions: int = 8):
+    def __init__(self, state_size: int, pos_encoding_dim: int, num_actions: int = 8, stop_init_bias: float = -8.0):
         super().__init__()
         self.pos_dim = pos_encoding_dim
         rl_in_dim = state_size + self.pos_dim + 2
@@ -248,6 +248,11 @@ class Agent(nn.Module):
             nn.ReLU(),
             nn.Linear(head_hidden, 1),
         )
+        # Strong negative initialization on STOP bias to make early stopping unlikely initially
+        stop_last = self.stop_head[-1]
+        if isinstance(stop_last, nn.Linear) and stop_last.bias is not None:
+            nn.init.constant_(stop_last.bias, float(stop_init_bias))
+
 
     def move_policy(self, h: torch.Tensor, gaze: torch.Tensor):
         pe = create_spatial_position_encoding(gaze, self.pos_dim)

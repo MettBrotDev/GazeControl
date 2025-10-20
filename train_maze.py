@@ -254,7 +254,8 @@ def train(
     # No Gaussian std for discrete policy
 
     # Build separate optimizers for policy/value heads and backbone
-    agent = Agent(state_size=Config.HIDDEN_SIZE, pos_encoding_dim=Config.POS_ENCODING_DIM).to(Config.DEVICE)
+    agent = Agent(state_size=Config.HIDDEN_SIZE, pos_encoding_dim=Config.POS_ENCODING_DIM,
+                  stop_init_bias=float(getattr(Config, 'RL_STOP_INIT_BIAS', -8.0))).to(Config.DEVICE)
     policy_params = list(agent.parameters())
     backbone_params = list(model.parameters())
     
@@ -655,7 +656,7 @@ def train(
                 ls_clamped = ls.clamp_min(0).clamp_max(max_Steps - 1)
                 # Additional penalty for not executing all steps if final decision is wrong
                 incorrect = (preds != labels).float()
-                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()
+                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float() 
                 rewards_t[ls_clamped, batch_arange] = rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
 
                 with torch.no_grad():
