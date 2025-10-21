@@ -411,11 +411,11 @@ def save_dataset(images, labels, output_dir, split='train'):
     metadata = []
     
     for idx, (img, label) in enumerate(tqdm(zip(images, labels), desc=f"Saving {split}", total=len(images))):
-        # Save image
-        img_filename = f"maze_{idx:06d}.png"
+        # Save image with label in filename
+        img_filename = f"maze_{idx:06d}_label{int(label)}.png"
         img_path = os.path.join(img_dir, img_filename)
         Image.fromarray(img).save(img_path)
-        
+
         # Store metadata
         metadata.append({
             'filename': img_filename,
