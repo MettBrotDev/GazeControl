@@ -93,7 +93,7 @@ class Config:
     # Small per-step time penalty to encourage stopping early when useful
     RL_STEP_PENALTY = 0.005 #maybe lower it to 0.005 for next training
 
-    RL_ONLY_EPOCHS = 1
+    RL_ONLY_EPOCHS = 0
 
     # Initial gaze position control (normalized [0,1]): use top-left start with optional small jitter
     START_GAZE = (0.06, 0.06)    # set to None for random center start; (0,0) is exact corner
