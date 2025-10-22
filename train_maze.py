@@ -406,7 +406,8 @@ def train(
             # Accumulate per-step losses (optionally masked/local)
             for step in range(num_steps):
                 # record current gaze before taking action
-                gaze_path.append(gaze[0].detach().cpu())
+                # Keep full batch gaze history on device for final visibility mask
+                gaze_path.append(gaze.detach().clone())
                 # Multi-scale glimpse: k scales with sizes base*(2**i), all resized to FOVEA_OUTPUT_SIZE
                 k_scales = int(getattr(Config, 'K_SCALES', 3))
                 base_h, base_w = Config.FOVEA_CROP_SIZE
@@ -442,28 +443,8 @@ def train(
                 max_w = getattr(Config, "STEP_LOSS_MAX", 0.2)
                 weight = min_w + (max_w - min_w) * step_frac
 
-                # Compute L1 loss with optional foreground masking on alive subset
-                if use_fg_mask:
-                    # Convert from [-1,1] to [0,1] for luminance computation
-                    img_01 = (image[alive_idx] + 1.0) / 2.0
-                    recon_01 = (reconstruction[alive_idx] + 1.0) / 2.0
-                    # Compute luminance for foreground detection
-                    img_y = 0.2989 * img_01[:,0:1] + 0.5870 * img_01[:,1:2] + 0.1140 * img_01[:,2:3]
-                    recon_y = 0.2989 * recon_01[:,0:1] + 0.5870 * recon_01[:,1:2] + 0.1140 * recon_01[:,2:3]
-                    # Create weight mask: foreground=1.0, background=bg_weight
-                    w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
-                    # Apply weight to L1 error (in [0,1] space)
-                    l1_step = (w * (recon_y - img_y).abs()).mean() * weight + l1_m
-                else:
-                    l1_step = l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight + l1_m
-                
-                # ANTI-COLLAPSE: Add variance penalty at each step
-                step_var_penalty = 0.0
-                if getattr(Config, "USE_VARIANCE_PENALTY", False):
-                    recon_var = reconstruction.var(dim=[2, 3]).mean()
-                    var_penalty = torch.exp(-recon_var * 10.0)
-                    step_var_penalty = var_penalty.item()
-                    l1_step = l1_step + getattr(Config, "VARIANCE_PENALTY_WEIGHT", 0.1) * var_penalty * weight
+                # Compute L1 loss alive subset
+                l1_step = l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight + l1_m
 
                 # Compute MS-SSIM loss for this step if enabled on alive subset
                 if use_ssim:
@@ -539,39 +520,59 @@ def train(
             # Final reconstruction from final LSTM state with larger weight
             final_recon = model.decode_from_state(state)
             
-            # Compute L1 loss with optional foreground masking
-            if use_fg_mask:
-                # Convert from [-1,1] to [0,1] for luminance computation
-                img_01 = (image + 1.0) / 2.0
-                final_01 = (final_recon + 1.0) / 2.0
-                img_y = 0.2989 * img_01[:,0:1] + 0.5870 * img_01[:,1:2] + 0.1140 * img_01[:,2:3]
-                final_y = 0.2989 * final_01[:,0:1] + 0.5870 * final_01[:,1:2] + 0.1140 * final_01[:,2:3]
-                w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
-                final_l1 = (w * (final_y - img_y).abs()).mean()
+            # Optional: restrict final reconstruction loss to what the agent actually observed
+            use_final_mask = bool(getattr(Config, "USE_FINAL_VISIBILITY_MASK", False)) and len(gaze_path) > 0
+            final_l1 = None
+            masked_final_gdl = None
+            if use_final_mask:
+                H, W = Config.IMG_SIZE
+                # Base sigma as fraction of image based on fovea size
+                sigma_base = Config.FOVEA_OUTPUT_SIZE[0] ** float(getattr(Config, "K_SCALES", 3)) / max(H, W)
+                sigma_frac_final = sigma_base * float(getattr(Config, "FINAL_MASK_SIGMA_SCALE", getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35)))
+                # Build per-step masks and union across actually executed steps per sample
+                T_obs = len(gaze_path)
+                masks_t = []
+                for t in range(T_obs):
+                    masks_t.append(_make_gaussian_mask(H, W, gaze_path[t], sigma_frac=sigma_frac_final, device=Config.DEVICE))  # (B,1,H,W)
+                masks_stack = torch.stack(masks_t, dim=0)  # (T,B,1,H,W)
+
+                # Determine executed steps per-sample; include all steps if never stopped
+                ls = last_step.clone()
+                ls[ls < 0] = T_obs - 1
+                t_idx = torch.arange(T_obs, device=Config.DEVICE).unsqueeze(1)  # (T,1)
+                exec_masks_tb = (t_idx <= ls.unsqueeze(0)).to(masks_stack.dtype)  # (T,B)
+                exec_masks_tb = exec_masks_tb.view(T_obs, -1, 1, 1, 1)
+                masks_stack = masks_stack * exec_masks_tb
+                # Union over time
+                final_mask = torch.amax(masks_stack, dim=0)  # (B,1,H,W)
+                # Expand to channels
+                final_mask3 = final_mask.expand(-1, 3, H, W)
+
+                # Masked per-sample L1 averaged over visible area only
+                per_sample_l1 = (((final_recon - image).abs() * final_mask3).flatten(1).sum(dim=1) /
+                                   (final_mask3.flatten(1).sum(dim=1) + 1e-6))
+                final_l1 = per_sample_l1.mean()
+
+                # If using GDL, use manual gdl inside mask
+                if criterion_gdl is not None:
+                    # Horizontal gradients: width-1
+                    pred_dx = torch.abs(final_recon[:, :, :, 1:] - final_recon[:, :, :, :-1])
+                    targ_dx = torch.abs(image[:, :, :, 1:] - image[:, :, :, :-1])
+                    mask_dx = final_mask3[:, :, :, 1:] * final_mask3[:, :, :, :-1]
+                    dx_diff = torch.abs(pred_dx - targ_dx) * mask_dx
+                    dx_sum = mask_dx.flatten(1).sum(dim=1).clamp_min(1.0)  # avoid div by zero
+                    dx_loss = (dx_diff.flatten(1).sum(dim=1) / dx_sum).mean()
+
+                    # Vertical gradients: height-1
+                    pred_dy = torch.abs(final_recon[:, :, 1:, :] - final_recon[:, :, :-1, :])
+                    targ_dy = torch.abs(image[:, :, 1:, :] - image[:, :, :-1, :])
+                    mask_dy = final_mask3[:, :, 1:, :] * final_mask3[:, :, :-1, :]
+                    dy_diff = torch.abs(pred_dy - targ_dy) * mask_dy
+                    dy_sum = mask_dy.flatten(1).sum(dim=1).clamp_min(1.0)
+                    dy_loss = (dy_diff.flatten(1).sum(dim=1) / dy_sum).mean()
+                    masked_final_gdl = dx_loss + dy_loss
             else:
                 final_l1 = l1_loss(final_recon, image)
-            
-            # ANTI-COLLAPSE: Add variance penalty to final reconstruction
-            final_var_penalty = 0.0
-            final_variance = 0.0
-            if getattr(Config, "USE_VARIANCE_PENALTY", False):
-                recon_var = final_recon.var(dim=[2, 3]).mean()
-                final_variance = recon_var.item()
-                var_penalty = torch.exp(-recon_var * 10.0)
-                final_var_penalty = var_penalty.item()
-                final_l1 = final_l1 + getattr(Config, "VARIANCE_PENALTY_WEIGHT", 0.1) * var_penalty
-            
-            # ANTI-COLLAPSE: Penalize near-zero latent codes (prevents LSTM collapse)
-            latent_norm_penalty = 0.0
-            if getattr(Config, "USE_LATENT_NORM_PENALTY", False):
-                # state is a tuple (hidden, cell) from LSTM, extract hidden state
-                h_state = state[0] if isinstance(state, tuple) else state
-                latent_norm = torch.norm(h_state, dim=1).mean()  # L2 norm across latent dimensions
-                min_norm = getattr(Config, "LATENT_NORM_MIN", 0.5)
-                norm_deficit = F.relu(min_norm - latent_norm)
-                latent_norm_penalty = norm_deficit.item()
-                penalty_weight = getattr(Config, "LATENT_NORM_PENALTY_WEIGHT", 1.0)
-                final_l1 = final_l1 + norm_deficit * penalty_weight
             
             # Optional perceptual loss
             final_perc = None
@@ -588,7 +589,10 @@ def train(
             # Optional GDL on final reconstruction
             final_gdl = None
             if criterion_gdl is not None:
-                final_gdl = criterion_gdl(final_recon, image)
+                if use_final_mask and masked_final_gdl is not None:
+                    final_gdl = masked_final_gdl
+                else:
+                    final_gdl = criterion_gdl(final_recon, image)
             
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
             final_loss = l1_weight * final_l1 * final_mult
@@ -744,13 +748,6 @@ def train(
                     logs["loss/cls"] = float(cls_loss.item())
                 logs["phase/warmup"] = int(warmup_active)
                 logs["phase/rl_enabled"] = int(rl_enabled)
-                if getattr(Config, "USE_VARIANCE_PENALTY", False):
-                    logs["loss/variance_penalty"] = final_var_penalty
-                    logs["metrics/output_variance"] = final_variance
-                if getattr(Config, "USE_LATENT_NORM_PENALTY", False):
-                    logs["loss/latent_norm_penalty"] = latent_norm_penalty
-                    h_state = state[0] if isinstance(state, tuple) else state
-                    logs["metrics/latent_norm"] = torch.norm(h_state, dim=1).mean().item()
                 wandb.log(logs, step=global_step)
 
             # Occasionally log a synchronized figure: Original+GazePath vs Reconstruction (every 10 batches)

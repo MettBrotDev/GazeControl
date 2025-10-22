@@ -52,7 +52,11 @@ class Config:
     STEP_LOSS_MIN = 0.05
     STEP_LOSS_MAX = 0.5
     FINAL_LOSS_MULT = 8.0
-    STEP_MASK_SIGMA_SCALE = 0.35
+    STEP_MASK_SIGMA_SCALE = 0.5
+    # restrict final loss to regions the agent actually observed
+    USE_FINAL_VISIBILITY_MASK = True
+    # If not set, falls back to STEP_MASK_SIGMA_SCALE
+    FINAL_MASK_SIGMA_SCALE = 0.5
 
     # Decoder Pretraining (if desired on Maze itself)
     PRETRAIN_STEPS = 10000
@@ -86,7 +90,7 @@ class Config:
     RL_NORM_ADV = True
     RL_STOP_INIT_BIAS = -8.0      # stronger negative initialization for stop action
     # Small per-step time penalty to encourage stopping early when useful
-    RL_STEP_PENALTY = 0.01 #maybe lower it to 0.005 for next training
+    RL_STEP_PENALTY = 0.005 #maybe lower it to 0.005 for next training
 
     RL_ONLY_EPOCHS = 1
 
