@@ -769,7 +769,11 @@ def train(
                     # Left: Original with gaze path
                     axs[0].imshow(orig_np)
                     if len(gaze_path) > 0:
-                        pts = [(int(p[0].item() * (W - 1)), int(p[1].item() * (H - 1))) for p in gaze_path]
+                        # Support both shapes: p is (2,) or (B,2); always visualize sample 0
+                        pts = []
+                        for p in gaze_path:
+                            p0 = p if p.dim() == 1 else p[0]
+                            pts.append((int(p0[0].item() * (W - 1)), int(p0[1].item() * (H - 1))))
                         xs, ys = zip(*pts)
                         axs[0].scatter(xs, ys, c='r', s=40, marker='x', label='gaze')
                         axs[0].plot(xs, ys, c='yellow', linewidth=1, alpha=0.8)
@@ -787,8 +791,9 @@ def train(
                     if wb is not None:
                         try:
                             wandb.log({"train/original_gaze_vs_recon": wandb.Image(fig)}, step=global_step)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Surface the error once to avoid silent failures when image logging breaks
+                            print(f"W&B image log failed: {e}")
                     plt.close(fig)
                 except Exception:
                     pass
