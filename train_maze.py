@@ -403,6 +403,14 @@ def train(
             last_step = torch.full((B,), -1, dtype=torch.long, device=Config.DEVICE)
             final_decision_logits = torch.zeros(B, 2, device=Config.DEVICE)
 
+            # Prepare cumulative visibility mask for step-wise losses
+            use_step_mask = bool(getattr(Config, "USE_MASKED_STEP_LOSS", False))
+            if use_step_mask:
+                H, W = Config.IMG_SIZE
+                sum_mask = torch.zeros((B, 1, H, W), device=Config.DEVICE)
+                sigma_base = Config.FOVEA_OUTPUT_SIZE[0] / max(H, W)
+                sigma_step = sigma_base * float(getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35))
+
             # Accumulate per-step losses (optionally masked/local)
             for step in range(num_steps):
                 # record current gaze before taking action
@@ -423,14 +431,12 @@ def train(
                 if alive_idx.numel() == 0:
                     break
 
-                if getattr(Config, "USE_MASKED_STEP_LOSS", False):
-                    # Soft local mask around gaze; compute losses only where observed
-                    H, W = Config.IMG_SIZE
-                    sigma_base = Config.FOVEA_OUTPUT_SIZE[0] / max(H, W)
-                    sigma_frac = sigma_base * float(getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35))
-                    mask = _make_gaussian_mask(H, W, gaze[alive_idx], sigma_frac=sigma_frac, device=Config.DEVICE)  # (Ba,1,H,W)
-                    # Broadcast to channels and compute per-sample masked loss, then mean over alive samples
-                    mask3 = mask.expand(-1, 3, H, W)
+                if use_step_mask:
+                    # Build current-step mask and merge into cumulative visibility
+                    step_mask = _make_gaussian_mask(H, W, gaze[alive_idx], sigma_frac=sigma_step, device=Config.DEVICE)  # (Ba,1,H,W)
+                    sum_mask[alive_idx] = torch.maximum(sum_mask[alive_idx], step_mask)
+                    # Compute masked per-sample L1 over union mask
+                    mask3 = sum_mask[alive_idx].expand(-1, 3, H, W)
                     per_sample_l1 = (((reconstruction[alive_idx] - image[alive_idx]).abs() * mask3).flatten(1).sum(dim=1) /
                                      (mask3.flatten(1).sum(dim=1) + 1e-6))
                     l1_m = per_sample_l1.mean()
@@ -443,10 +449,8 @@ def train(
                 max_w = getattr(Config, "STEP_LOSS_MAX", 0.2)
                 weight = min_w + (max_w - min_w) * step_frac
 
-                # Compute L1 loss alive subset
-                # Only use masked loss
-                # l1_step = l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight + l1_m
-                l1_step = l1_m
+                # Compute L1 loss alive subset (masked-only when enabled)
+                l1_step = (l1_m if use_step_mask else l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight)
 
                 # Compute MS-SSIM loss for this step if enabled on alive subset
                 if use_ssim:

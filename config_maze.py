@@ -22,7 +22,7 @@ class Config:
 
     # Multi-scale glimpses
     K_SCALES = 3                   # use 3 scales for maze
-    FUSION_TO_DIM = 96
+    FUSION_TO_DIM = 128
     FUSION_HIDDEN_MUL = 1.5
 
     # Decoder
@@ -46,7 +46,7 @@ class Config:
     L1_WEIGHT = 1.0
     PERC_WEIGHT = 0.0                
     SSIM_WEIGHT = 0.0
-    GDL_WEIGHT = 1.0                # Useful for sharp edges in mazes
+    GDL_WEIGHT = 0.0                # Useful for sharp edges in mazes
 
     # Step loss schedule and masking
     USE_MASKED_STEP_LOSS = True
