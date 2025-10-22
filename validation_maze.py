@@ -251,6 +251,10 @@ def validate(
                 action_idx = move_logits.argmax(dim=1)
                 stop_prob = torch.sigmoid(stop_logit)
                 stop_sample = (stop_prob >= 0.5).float()
+                # Enforce a minimum number of moves before allowing stop
+                min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
+                if step < min(min_steps, int(getattr(Config, 'MAX_STEPS', 20))) - 1:
+                    stop_sample = torch.zeros_like(stop_sample)
 
                 # Record decisions for samples that stop now
                 newly_stopped = (stop_sample >= 0.5) & alive_mask

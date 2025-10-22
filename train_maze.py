@@ -479,6 +479,10 @@ def train(
                     stop_prob = torch.sigmoid(stop_logit)
                     stop_dist = torch.distributions.Bernoulli(probs=stop_prob)
                     stop_sample = stop_dist.sample()       # (B,)
+                    # Enforce a minimum number of moves before allowing stop
+                    min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
+                    if step < min(min_steps, num_steps) - 1:
+                        stop_sample = torch.zeros_like(stop_sample)
                     stop_lp = stop_dist.log_prob(stop_sample)  # (B,)
                     # Compose joint logprob and entropy (approximate add)
                     logprob = move_lp + stop_lp
@@ -662,7 +666,7 @@ def train(
                 # Additional penalty for not executing all steps if final decision is wrong
                 # This is scaled super high to strongly encourage running to full length when unsure
                 incorrect = (preds != labels).float()
-                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 100
+                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 500
                 rewards_t[ls_clamped, batch_arange] = rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
 
                 with torch.no_grad():
