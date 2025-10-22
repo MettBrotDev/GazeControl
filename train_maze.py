@@ -444,7 +444,9 @@ def train(
                 weight = min_w + (max_w - min_w) * step_frac
 
                 # Compute L1 loss alive subset
-                l1_step = l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight + l1_m
+                # Only use masked loss
+                # l1_step = l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight + l1_m
+                l1_step = l1_m
 
                 # Compute MS-SSIM loss for this step if enabled on alive subset
                 if use_ssim:
@@ -458,6 +460,9 @@ def train(
                     gdl_step = criterion_gdl(reconstruction[alive_idx], image[alive_idx]) * weight
                 else:
                     gdl_step = 0.0
+
+                #only use masked loss
+                gdl_step = 0.0
 
                 rec_error = (
                     l1_weight * l1_step
