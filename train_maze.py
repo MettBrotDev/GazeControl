@@ -182,9 +182,10 @@ def train(
     ])
 
     # Use Maze dataset and its metadata labels
-    maze_root = os.path.join('./Data', 'Maze')
+    # Allow overriding maze dataset root via config (must contain imgs/{train,val,test} and *_metadata.json)
+    maze_root = getattr(Config, 'MAZE_ROOT', os.path.join('./Data', 'Maze'))
     if not os.path.exists(os.path.join(maze_root, 'imgs', 'train')):
-        raise FileNotFoundError(f"Maze dataset not found at {maze_root}. Generate it with Datasets/generate_maze.py")
+        raise FileNotFoundError(f"Maze dataset not found at {maze_root}. Set Config.MAZE_ROOT to your dataset root or generate it with Datasets/generate_maze.py")
     train_dataset = MazeDataset(maze_root, split='train', transform=transform_img)
     val_dataset = MazeDataset(maze_root, split='val', transform=transform_img)
 

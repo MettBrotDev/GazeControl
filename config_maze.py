@@ -1,9 +1,9 @@
 class Config:
     # 24x24 images: 6x6 blocks of 4x4 pixels
-    IMG_SIZE = (24, 24)
+    IMG_SIZE = (60, 60)
     # Keep fovea/crop tiny for speed; single-scale is fine here
     FOVEA_OUTPUT_SIZE = (4, 4)      # encoder input size per scale
-    FOVEA_CROP_SIZE = (4, 4)    # base crop; multi-scale uses 4,8
+    FOVEA_CROP_SIZE = (4, 4)    # base crop; multi-scale uses 4,8, 16
     EPOCHS = 80
 
     # Training hyperparameters (small problem)
@@ -13,16 +13,16 @@ class Config:
     BATCH_SIZE = 128
 
     # Model dims (lightweight)
-    HIDDEN_SIZE = 128
+    HIDDEN_SIZE = 512
     ENCODER_C1 = 12
-    ENCODER_C2 = 24
+    ENCODER_C2 = 16
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # 2x2 pooled features
     POS_ENCODING_DIM = 64
     LSTM_LAYERS = 1
 
     # Multi-scale glimpses
-    K_SCALES = 2                   # use 2 scales for maze
-    FUSION_TO_DIM = 128
+    K_SCALES = 3                   # use 3 scales for maze
+    FUSION_TO_DIM = 96
     FUSION_HIDDEN_MUL = 1.5
 
     # Decoder
@@ -30,15 +30,14 @@ class Config:
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     # Data: point at Maze dataset images
-    LOCAL_DATA_DIR = [
-        "./Data/Maze/imgs/train",
-    ]
+    MAZE_ROOT = "./Data/Maze15"
+    LOCAL_DATA_DIR = [MAZE_ROOT]
     MNIST_DATA_DIR = "./Data/mnist"
     CIFAR100_DATA_DIR = "./Data/cifar100"
 
     # Rollout
-    MAX_STEPS = 20
-    MAX_MOVE = 0.15
+    MAX_STEPS = 30
+    MAX_MOVE = 0.0667  # max gaze move per step (one tile)
     USE_GAZE_BOUNDS = False  # allow exploration to image borders for maze start at top-left
     GAZE_BOUND_FRACTION = 0.05
 
@@ -56,7 +55,7 @@ class Config:
     STEP_MASK_SIGMA_SCALE = 0.35
 
     # Decoder Pretraining (if desired on Maze itself)
-    PRETRAIN_STEPS = 20000
+    PRETRAIN_STEPS = 10000
     PRETRAIN_LR = 3e-3
     PRETRAIN_BATCH_SIZE = 128
     FREEZE_DECODER_EPOCHS = 1
@@ -64,7 +63,7 @@ class Config:
     PRETRAIN_L1_WEIGHT = 1.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
-    PRETRAIN_PERC_WEIGHT = 0.01
+    PRETRAIN_PERC_WEIGHT = 0.002
     PRETRAIN_SSIM_WEIGHT = 0.0
 
     PRETRAINED_MODEL_PATH = ""  # not used
@@ -92,7 +91,7 @@ class Config:
     RL_ONLY_EPOCHS = 1
 
     # Initial gaze position control (normalized [0,1]): use top-left start with optional small jitter
-    START_GAZE = (0.05, 0.05)    # set to None for random center start; (0,0) is exact corner
+    START_GAZE = (0.06, 0.06)    # set to None for random center start; (0,0) is exact corner
     START_JITTER = 0.02          # uniform jitter radius around START_GAZE; set 0.0 for fixed
 
     @classmethod
