@@ -257,6 +257,15 @@ def train(
     # Build separate optimizers for policy/value heads and backbone
     agent = Agent(state_size=Config.HIDDEN_SIZE, pos_encoding_dim=Config.POS_ENCODING_DIM,
                   stop_init_bias=float(getattr(Config, 'RL_STOP_INIT_BIAS', -8.0))).to(Config.DEVICE)
+    # If a checkpoint was requested via --load-full and it contains an agent_state_dict, load it now
+    if load_full_model and ckpt_path and os.path.exists(ckpt_path):
+        try:
+            raw2 = torch.load(ckpt_path, map_location=Config.DEVICE)
+            if isinstance(raw2, dict) and 'agent_state_dict' in raw2:
+                agent.load_state_dict(raw2['agent_state_dict'], strict=False)
+                print("Loaded agent_state_dict from checkpoint")
+        except Exception as e:
+            print(f"Warning: failed to load agent_state_dict ({e})")
     policy_params = list(agent.parameters())
     backbone_params = list(model.parameters())
     
