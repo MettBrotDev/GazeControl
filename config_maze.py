@@ -36,8 +36,8 @@ class Config:
     CIFAR100_DATA_DIR = "./Data/cifar100"
 
     # Rollout
-    MAX_STEPS = 30
-    MAX_MOVE = 0.0667  # max gaze move per step (one tile)
+    MAX_STEPS = 40
+    MAX_MOVE = 0.1  # max gaze move per step (one tile)
     MIN_STEPS_BEFORE_STOP = 15
     USE_GAZE_BOUNDS = False  # allow exploration to image borders for maze start at top-left
     GAZE_BOUND_FRACTION = 0.05
