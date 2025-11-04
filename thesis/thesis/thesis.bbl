@@ -1,7 +1,37 @@
 \begin{thebibliography}{}
 
+\bibitem[Hochreiter and Schmidhuber(1997)Hochreiter and Schmidhuber]{hochreiter1997long}
+Hochreiter, S. and Schmidhuber, J. (1997).
+\newblock Long short-term memory.
+\newblock {\em Neural computation\/}, {\normalfont\bfseries 9}(8), 1735--1780.
+
+\bibitem[Mathieu {\em et~al.}(2016)Mathieu, Couprie, and LeCun]{mathieu2016deepmultiscalevideoprediction}
+Mathieu, M., Couprie, C., and LeCun, Y. (2016).
+\newblock Deep multi-scale video prediction beyond mean square error.
+
 \bibitem[Mnih {\em et~al.}(2014)Mnih, Heess, Graves, and Kavukcuoglu]{mnih2014recurrentmodelsvisualattention}
 Mnih, V., Heess, N., Graves, A., and Kavukcuoglu, K. (2014).
 \newblock Recurrent models of visual attention.
+
+\bibitem[Mnih {\em et~al.}(2016)Mnih, Badia, Mirza, Graves, Lillicrap, Harley, Silver, and Kavukcuoglu]{mnih2016asynchronousmethodsdeepreinforcement}
+Mnih, V., Badia, A.~P., Mirza, M., Graves, A., Lillicrap, T.~P., Harley, T., Silver, D., and Kavukcuoglu, K. (2016).
+\newblock Asynchronous methods for deep reinforcement learning.
+
+\bibitem[Pihlgren {\em et~al.}(2024)Pihlgren, Nikolaidou, Chhipa, Abid, Saini, Sandin, and Liwicki]{pihlgren2024systematicperformanceanalysisdeep}
+Pihlgren, G.~G., Nikolaidou, K., Chhipa, P.~C., Abid, N., Saini, R., Sandin, F., and Liwicki, M. (2024).
+\newblock A systematic performance analysis of deep perceptual loss networks: Breaking transfer learning conventions.
+
+\bibitem[Schulman {\em et~al.}(2017)Schulman, Wolski, Dhariwal, Radford, and Klimov]{schulman2017proximalpolicyoptimizationalgorithms}
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. (2017).
+\newblock Proximal policy optimization algorithms.
+
+\bibitem[Schulman {\em et~al.}(2018)Schulman, Moritz, Levine, Jordan, and Abbeel]{schulman2018highdimensionalcontinuouscontrolusing}
+Schulman, J., Moritz, P., Levine, S., Jordan, M., and Abbeel, P. (2018).
+\newblock High-dimensional continuous control using generalized advantage estimation.
+
+\bibitem[Wang {\em et~al.}(2004)Wang, Bovik, Sheikh, and Simoncelli]{1284395}
+Wang, Z., Bovik, A., Sheikh, H., and Simoncelli, E. (2004).
+\newblock Image quality assessment: from error visibility to structural similarity.
+\newblock {\em IEEE Transactions on Image Processing\/}, {\normalfont\bfseries 13}(4), 600--612.
 
 \end{thebibliography}

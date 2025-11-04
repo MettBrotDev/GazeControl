@@ -4,51 +4,51 @@ The top-level auxiliary file: thesis.aux
 A level-1 auxiliary file: misc/abstract.aux
 A level-1 auxiliary file: misc/kurzfassung.aux
 A level-1 auxiliary file: chapter/introduction.aux
-A level-1 auxiliary file: chapter/foundations.aux
+A level-1 auxiliary file: chapter/methodology.aux
 A level-1 auxiliary file: chapter/conclusion.aux
 A level-1 auxiliary file: chapter/appendices.aux
 A level-1 auxiliary file: misc/abbreviations.aux
 The style file: natbib.bst
 A level-1 auxiliary file: misc/statement.aux
 Database file #1: thesis.bib
-You've used 1 entry,
+You've used 8 entries,
             2378 wiz_defined-function locations,
-            536 strings with 4331 characters,
-and the built_in function-call counts, 424 in all, are:
-= -- 37
-> -- 34
-< -- 0
-+ -- 10
-- -- 10
-* -- 38
-:= -- 86
-add.period$ -- 3
-call.type$ -- 1
-change.case$ -- 6
-chr.to.int$ -- 1
-cite$ -- 1
-duplicate$ -- 14
-empty$ -- 19
-format.name$ -- 11
-if$ -- 77
+            571 strings with 5748 characters,
+and the built_in function-call counts, 3713 in all, are:
+= -- 325
+> -- 308
+< -- 1
++ -- 94
+- -- 92
+* -- 362
+:= -- 705
+add.period$ -- 27
+call.type$ -- 8
+change.case$ -- 49
+chr.to.int$ -- 8
+cite$ -- 8
+duplicate$ -- 122
+empty$ -- 178
+format.name$ -- 102
+if$ -- 697
 int.to.chr$ -- 1
 int.to.str$ -- 0
-missing$ -- 0
-newline$ -- 7
-num.names$ -- 4
-pop$ -- 7
+missing$ -- 2
+newline$ -- 37
+num.names$ -- 32
+pop$ -- 53
 preamble$ -- 1
-purify$ -- 6
+purify$ -- 49
 quote$ -- 0
-skip$ -- 11
+skip$ -- 87
 stack$ -- 0
-substring$ -- 13
-swap$ -- 2
+substring$ -- 159
+swap$ -- 19
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 9
+type$ -- 72
 warning$ -- 0
-while$ -- 3
+while$ -- 27
 width$ -- 0
-write$ -- 12
+write$ -- 88

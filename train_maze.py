@@ -133,19 +133,45 @@ class MazeDataset(Dataset):
         self.img_dir = os.path.join(root_dir, 'imgs', split)
         self.meta_path = os.path.join(root_dir, f'{split}_metadata.json')
         with open(self.meta_path, 'r') as f:
-            meta = json.load(f)
-        self.samples = [(m['filename'], int(m['label'])) for m in meta]
+            self.meta = json.load(f)
+        # Keep full entries so we can access start/end if present
+        self.samples = self.meta
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        fname, label = self.samples[idx]
+        entry = self.samples[idx]
+        fname = entry['filename']
+        label = int(entry['label'])
         p = os.path.join(self.img_dir, fname)
-        img = Image.open(p).convert('RGB')
-        if self.transform:
-            img = self.transform(img)
-        return img, torch.tensor(label, dtype=torch.long)
+
+        # Load image
+        img_pil = Image.open(p).convert('RGB')
+
+        # Just take gridsize like this for now
+        self.grid_size = Config.IMG_SIZE[0] // 4
+
+        # Compute start gaze from metadata grid coordinate
+        sx = sy = None
+        if isinstance(entry.get('start'), dict):
+            try:
+                sx = int(entry['start'].get('x'))
+                sy = int(entry['start'].get('y'))
+            except Exception:
+                sx = sy = None
+        if sx is not None and sy is not None:
+            nx = (float(sx) + 0.5) / float(self.grid_size)
+            ny = (float(sy) + 0.5) / float(self.grid_size)
+            start_xy = torch.tensor([nx, ny], dtype=torch.float32)
+        else:
+            # Fallback: center if metadata is missing
+            start_xy = torch.tensor([0.5, 0.5], dtype=torch.float32)
+
+        # Apply transforms to image
+        img = self.transform(img_pil) if self.transform else img_pil
+
+        return img, torch.tensor(label, dtype=torch.long), start_xy
 
 
 def train(
@@ -375,7 +401,13 @@ def train(
             for param in model.decoder.parameters():
                 param.requires_grad = True
                 
-        for batch_idx, (images, labels) in enumerate(train_loader):
+        for batch_idx, batch in enumerate(train_loader):
+            # Support datasets that return (image, label, start_xy)
+            if isinstance(batch, (list, tuple)) and len(batch) >= 3:
+                images, labels, starts_xy = batch
+            else:
+                images, labels = batch
+                starts_xy = None
             total_rec_loss = torch.tensor(0.0, device=Config.DEVICE)
             image = images.to(Config.DEVICE)
             labels = labels.to(Config.DEVICE)
@@ -383,7 +415,14 @@ def train(
             # Start gaze position
             num_steps = Config.MAX_STEPS
             B = image.size(0)
-            if hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
+            if starts_xy is not None:
+                base = starts_xy.to(Config.DEVICE)
+                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+                if jitter_r > 0.0:
+                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
+                    base = base + jitter
+                gaze = base.clamp(0.0, 1.0)
+            elif hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
                 base = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1)
                 jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
                 if jitter_r > 0.0:
@@ -405,6 +444,13 @@ def train(
             logprobs = []   # list of (B,)
             values = []     # list of (B,)
             entropies = []  # list of (B,)
+            # For PPO: store per-step state/action to recompute new log probs
+            ppo_h = []            # list of (B,H)
+            ppo_gaze = []         # list of (B,2)
+            ppo_move_idx = []     # list of (B,)
+            ppo_stop = []         # list of (B,)
+            ppo_old_lp = []       # list of (B,)
+            ppo_old_v = []        # list of (B,)
             # record gaze positions per step (pre-action)
             gaze_path = []
             # Early stopping per-sample
@@ -501,6 +547,12 @@ def train(
                     min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
                     if step < min(min_steps, num_steps) - 1:
                         stop_sample = torch.zeros_like(stop_sample)
+                    # Confidence gating: only allow STOP if classifier confidence >= threshold
+                    conf_thresh = float(getattr(Config, 'STOP_CONF_THRESH', 0.9))
+                    if conf_thresh is not None and conf_thresh > 0.0:
+                        with torch.no_grad():
+                            conf = torch.softmax(decision_logits_step, dim=1).amax(dim=1)
+                        stop_sample = torch.where(conf >= conf_thresh, stop_sample, torch.zeros_like(stop_sample))
                     stop_lp = stop_dist.log_prob(stop_sample)  # (B,)
                     # Compose joint logprob and entropy (approximate add)
                     logprob = move_lp + stop_lp
@@ -508,6 +560,14 @@ def train(
                     logprobs.append(logprob)
                     values.append(value_t)
                     entropies.append(entropy)
+                    # PPO storage
+                    if bool(getattr(Config, 'USE_PPO', False)):
+                        ppo_h.append(h_t.detach())
+                        ppo_gaze.append(gaze.detach())
+                        ppo_move_idx.append(move_idx.detach())
+                        ppo_stop.append(stop_sample.detach())
+                        ppo_old_lp.append(logprob.detach())
+                        ppo_old_v.append(value_t.detach())
                     # final decision logits update for samples that stopped this step
                     newly_stopped = (stop_sample >= 0.5) & alive_mask
                     if newly_stopped.any():
@@ -637,9 +697,19 @@ def train(
             ce_cls = nn.CrossEntropyLoss()
             cls_loss = ce_cls(final_decision_logits, labels)
 
-            total_loss = total_rec_loss + final_loss + (cls_loss if cls_enabled else 0.0)
+            # Compute non-RL losses first and step backbone once
+            total_nonrl = total_rec_loss + final_loss + (cls_loss if cls_enabled else 0.0)
 
-            # ----- RL loss (A2C with GAE) -----
+            # Backpropagation for non-RL (model/backbone/decoder)
+            if not backbone_frozen:
+                opt_backbone.zero_grad()
+            total_nonrl.backward()
+            # Gradient clipping for stability (backbone only here)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=Config.GRAD_CLIP_NORM)
+            if not backbone_frozen:
+                opt_backbone.step()
+
+            # ----- RL loss (A2C/GAE or PPO) -----
             rl_loss = torch.tensor(0.0, device=Config.DEVICE)
             if rl_enabled and len(values) > 0:
                 gamma = float(getattr(Config, 'RL_GAMMA', 0.95))
@@ -684,7 +754,7 @@ def train(
                 # Additional penalty for not executing all steps if final decision is wrong
                 # This is scaled super high to strongly encourage running to full length when unsure
                 incorrect = (preds != labels).float()
-                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 50
+                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 200
                 rewards_t[ls_clamped, batch_arange] = rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
 
                 with torch.no_grad():
@@ -708,33 +778,151 @@ def train(
                     adv_std = adv_var.sqrt().clamp_min(1e-6)
                     advantages = (advantages - adv_mean) / adv_std
 
-                denom = exec_masks_t.sum().clamp_min(1.0)
-                policy_loss = -((logprobs_t * advantages.detach()) * exec_masks_t).sum() / denom
-                value_loss = (((values_t - returns) ** 2) * exec_masks_t).sum() / denom
-                entropy_loss = -(entropies_t * exec_masks_t).sum() / denom
-                value_coef = float(getattr(Config, 'RL_VALUE_COEF', 0.5))
-                entropy_coef = float(getattr(Config, 'RL_ENTROPY_COEF', 0.01))
-                rl_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
+                use_ppo = bool(getattr(Config, 'USE_PPO', False))
+                if not use_ppo:
+                    # ----- A2C single update on agent only -----
+                    denom = exec_masks_t.sum().clamp_min(1.0)
+                    policy_loss = -((logprobs_t * advantages.detach()) * exec_masks_t).sum() / denom
+                    value_loss = (((values_t - returns) ** 2) * exec_masks_t).sum() / denom
+                    entropy_loss = -(entropies_t * exec_masks_t).sum() / denom
+                    value_coef = float(getattr(Config, 'RL_VALUE_COEF', 0.5))
+                    entropy_coef = float(getattr(Config, 'RL_ENTROPY_COEF', 0.01))
+                    rl_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
 
-            total_loss = total_loss + float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0)) * rl_loss
+                    if opt_policy is not None:
+                        opt_policy.zero_grad()
+                        (float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0)) * rl_loss).backward()
+                        torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=Config.GRAD_CLIP_NORM)
+                        opt_policy.step()
+                else:
+                    # ----- Full PPO: multi-epoch, minibatch updates on agent only -----
+                    # Stack PPO storage and pad to max steps
+                    if len(ppo_h) > 0:
+                        Hdim = ppo_h[0].shape[-1]
+                        ppo_h_exec = torch.stack(ppo_h, dim=0)           # (T,B,H)
+                        ppo_gaze_exec = torch.stack(ppo_gaze, dim=0)     # (T,B,2)
+                        ppo_mv_exec = torch.stack(ppo_move_idx, dim=0)   # (T,B)
+                        ppo_st_exec = torch.stack(ppo_stop, dim=0)       # (T,B)
+                        ppo_lp_exec = torch.stack(ppo_old_lp, dim=0)     # (T,B)
+                        ppo_v_exec = torch.stack(ppo_old_v, dim=0)       # (T,B)
+                    else:
+                        Hdim = values_t.shape[-1] if values_t.ndim > 2 else Config.HIDDEN_SIZE
+                        ppo_h_exec = torch.zeros((0, B, Hdim), device=Config.DEVICE)
+                        ppo_gaze_exec = torch.zeros((0, B, 2), device=Config.DEVICE)
+                        ppo_mv_exec = torch.zeros((0, B), device=Config.DEVICE, dtype=torch.long)
+                        ppo_st_exec = torch.zeros((0, B), device=Config.DEVICE)
+                        ppo_lp_exec = torch.zeros((0, B), device=Config.DEVICE)
+                        ppo_v_exec = torch.zeros((0, B), device=Config.DEVICE)
 
-            # Backpropagation
-            if opt_policy is not None and rl_enabled:
-                opt_policy.zero_grad()
-            # Allow stepping backbone except when explicitly frozen
-            if not backbone_frozen:
-                opt_backbone.zero_grad()
-            total_loss.backward()
-            # Gradient clipping for stability (clip both backbone and agent)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=Config.GRAD_CLIP_NORM)
-            if opt_policy is not None and rl_enabled:
-                torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=Config.GRAD_CLIP_NORM)
+                    def pad_to_max_gen(t_TB, pad_shape_last=None, dtype=None):
+                        if t_TB.size(0) == max_Steps:
+                            return t_TB
+                        pad_len = max_Steps - t_TB.size(0)
+                        if pad_shape_last is None:
+                            pad = torch.zeros((pad_len, *t_TB.shape[1:]), device=t_TB.device, dtype=t_TB.dtype)
+                        else:
+                            pad = torch.zeros((pad_len, *pad_shape_last), device=t_TB.device, dtype=dtype or t_TB.dtype)
+                        return torch.cat([t_TB, pad], dim=0)
 
-            # Step optimizers
-            if opt_policy is not None and rl_enabled:
-                opt_policy.step()
-            if not backbone_frozen:
-                opt_backbone.step()
+                    ppo_h_t = pad_to_max_gen(ppo_h_exec)
+                    ppo_gaze_t = pad_to_max_gen(ppo_gaze_exec)
+                    ppo_mv_t = pad_to_max_gen(ppo_mv_exec)
+                    ppo_st_t = pad_to_max_gen(ppo_st_exec)
+                    old_logprobs_t = pad_to_max_gen(ppo_lp_exec)
+                    old_values_t = pad_to_max_gen(ppo_v_exec)
+
+                    # Flatten valid time-steps using exec mask
+                    mask_flat = (exec_masks_t > 0.5).view(-1)
+                    h_flat = ppo_h_t.view(max_Steps * B, -1)[mask_flat]
+                    gaze_flat = ppo_gaze_t.view(max_Steps * B, 2)[mask_flat]
+                    mv_flat = ppo_mv_t.view(-1)[mask_flat]
+                    st_flat = ppo_st_t.view(-1)[mask_flat]
+                    old_lp_flat = old_logprobs_t.view(-1)[mask_flat]
+                    adv_flat = advantages.view(-1)[mask_flat].detach()
+                    ret_flat = returns.view(-1)[mask_flat].detach()
+                    old_v_flat = old_values_t.view(-1)[mask_flat].detach()
+                    n_samples = h_flat.size(0)
+                    if n_samples > 0:
+                        # Advantage normalization inside PPO (optional extra safety)
+                        if bool(getattr(Config, 'RL_NORM_ADV', False)):
+                            adv_mean = adv_flat.mean()
+                            adv_std = adv_flat.std(unbiased=False).clamp_min(1e-6)
+                            adv_flat = (adv_flat - adv_mean) / adv_std
+
+                        epochs = int(getattr(Config, 'PPO_EPOCHS', 4))
+                        mb_size = int(getattr(Config, 'PPO_MINIBATCH_SIZE', 1024))
+                        clip_eps = float(getattr(Config, 'PPO_CLIP_EPS', 0.2))
+                        vclip_eps = float(getattr(Config, 'PPO_VALUE_CLIP_EPS', 0.2))
+                        target_kl = float(getattr(Config, 'PPO_TARGET_KL', 0.0) or 0.0)
+                        rl_w = float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0))
+                        value_coef = float(getattr(Config, 'RL_VALUE_COEF', 0.5))
+                        entropy_coef = float(getattr(Config, 'RL_ENTROPY_COEF', 0.01))
+
+                        for ep in range(epochs):
+                            perm = torch.randperm(n_samples, device=Config.DEVICE)
+                            for start in range(0, n_samples, mb_size):
+                                idx = perm[start:start+mb_size]
+                                h_mb = h_flat[idx]
+                                gaze_mb = gaze_flat[idx]
+                                mv_mb = mv_flat[idx]
+                                st_mb = st_flat[idx]
+                                old_lp_mb = old_lp_flat[idx]
+                                adv_mb = adv_flat[idx]
+                                ret_mb = ret_flat[idx]
+                                old_v_mb = old_v_flat[idx]
+
+                                mv_logits_new, _dec_tmp, stop_logit_new, v_new = agent.full_policy(h_mb, gaze_mb)
+                                cat_new = Categorical(logits=mv_logits_new)
+                                mv_lp_new = cat_new.log_prob(mv_mb)
+                                ent_move = cat_new.entropy()
+                                stop_prob_new = torch.sigmoid(stop_logit_new)
+                                stop_dist_new = torch.distributions.Bernoulli(probs=stop_prob_new)
+                                st_lp_new = stop_dist_new.log_prob(st_mb)
+                                ent_stop = -(stop_prob_new * torch.log(stop_prob_new.clamp_min(1e-8)) + (1 - stop_prob_new) * torch.log((1 - stop_prob_new).clamp_min(1e-8)))
+                                new_lp_mb = mv_lp_new + st_lp_new
+
+                                ratio = torch.exp(new_lp_mb - old_lp_mb)
+                                surr1 = ratio * adv_mb
+                                surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv_mb
+                                policy_loss = -torch.mean(torch.min(surr1, surr2))
+
+                                # Value clipping
+                                v_pred = v_new
+                                v_clipped = old_v_mb + (v_pred - old_v_mb).clamp(-vclip_eps, vclip_eps)
+                                vf_loss1 = (v_pred - ret_mb) ** 2
+                                vf_loss2 = (v_clipped - ret_mb) ** 2
+                                value_loss = 0.5 * torch.mean(torch.max(vf_loss1, vf_loss2))
+
+                                entropy_loss = -torch.mean(ent_move + ent_stop)
+
+                                loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
+
+                                if opt_policy is not None:
+                                    opt_policy.zero_grad()
+                                    (rl_w * loss).backward()
+                                    torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=Config.GRAD_CLIP_NORM)
+                                    opt_policy.step()
+
+                            # Early stop by target KL
+                            if target_kl > 0.0:
+                                with torch.no_grad():
+                                    # Approximate KL on a random minibatch
+                                    idx = torch.randperm(n_samples, device=Config.DEVICE)[:min(n_samples, mb_size)]
+                                    h_mb = h_flat[idx]
+                                    gaze_mb = gaze_flat[idx]
+                                    mv_mb = mv_flat[idx]
+                                    st_mb = st_flat[idx]
+                                    old_lp_mb = old_lp_flat[idx]
+                                    mv_logits_new, _dec_tmp, stop_logit_new, _v_new = agent.full_policy(h_mb, gaze_mb)
+                                    cat_new = Categorical(logits=mv_logits_new)
+                                    mv_lp_new = cat_new.log_prob(mv_mb)
+                                    stop_prob_new = torch.sigmoid(stop_logit_new)
+                                    stop_dist_new = torch.distributions.Bernoulli(probs=stop_prob_new)
+                                    st_lp_new = stop_dist_new.log_prob(st_mb)
+                                    new_lp_mb = mv_lp_new + st_lp_new
+                                    approx_kl = torch.mean((old_lp_mb - new_lp_mb).clamp_min(0.0))
+                                if approx_kl.item() > target_kl:
+                                    break
 
             # Update counters and maybe checkpoint every 5000 images
             imgs_seen += images.size(0)
@@ -756,7 +944,7 @@ def train(
             if wb is not None:
                 logs = {
                     "loss/rec_l1": float(rec_loss_unscaled.item()),
-                    "loss/total": float(total_loss.item()),
+                    "loss/total_nonrl": float(total_nonrl.item()),
                     "episode/steps": int(Config.MAX_STEPS),
                 }
                 if final_perc is not None:
@@ -819,7 +1007,7 @@ def train(
                     plt.close(fig)
                 except Exception:
                     pass
-                print(f"Epoch {epoch} Batch {batch_idx}: rec_loss={rec_loss_unscaled.item():.6f} total={total_loss.item():.6f}")
+                print(f"Epoch {epoch} Batch {batch_idx}: rec_loss={rec_loss_unscaled.item():.6f} total_nonrl={total_nonrl.item():.6f}")
 
             global_step += 1
             episodes_seen += 1

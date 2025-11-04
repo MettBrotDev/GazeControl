@@ -409,3 +409,67 @@ class GradientDifferenceLoss(nn.Module):
         # Return mean gradient difference
         loss = torch.mean(grad_diff_x) + torch.mean(grad_diff_y)
         return loss
+
+
+class MazeCNNClassifier(nn.Module):
+    """Binary classifier for maze images.
+
+    Input:  (B, 3, 60, 60) in any range;
+    Output: (B,) raw logits (float)
+
+    Param count notes (approx):
+    - Conv stack (~1.92M)
+    - Head 6912 -> 16 -> 1 (~110.6K + 17)
+    - Total ≈ 2.03M
+    """
+    def __init__(self, in_ch: int = 3, pool_hw: int = 6, head_hidden: int = 16):
+        super().__init__()
+        # pretrain encoder
+        c1, c2, c3, c4 = 128, 256, 256, 192
+        self.features = nn.Sequential(
+            nn.Conv2d(in_ch, c1, 3, stride=2, padding=1),
+            nn.BatchNorm2d(c1),
+            nn.GELU(),
+
+            nn.Conv2d(c1, c2, 3, stride=2, padding=1),
+            nn.BatchNorm2d(c2),
+            nn.GELU(),
+
+            nn.Conv2d(c2, c3, 3, stride=2, padding=1),
+            nn.BatchNorm2d(c3),
+            nn.GELU(),
+
+            nn.Conv2d(c3, c3, 3, stride=1, padding=1),
+            nn.BatchNorm2d(c3),
+            nn.GELU(),
+
+            nn.Conv2d(c3, c4, 3, stride=1, padding=1),
+            nn.BatchNorm2d(c4),
+            nn.GELU(),
+        )
+        self.pool = nn.AdaptiveAvgPool2d((pool_hw, pool_hw))
+        self.flatten = nn.Flatten()
+
+
+        in_fc = c4 * pool_hw * pool_hw  # 192 * 6 * 6 = 6912 for 6x6
+        self.head = nn.Sequential(
+            nn.Linear(in_fc, head_hidden),
+            nn.GELU(),
+            nn.Linear(head_hidden, 1),
+        )
+
+    def forward(self, x: torch.Tensor, return_logits: bool = True) -> torch.Tensor:
+        x = self.features(x)
+        x = self.pool(x)
+        x = self.flatten(x)
+        logits = self.head(x).squeeze(-1)
+        if return_logits:
+            return logits
+        # Return probabilities if requested
+        return torch.sigmoid(logits)
+
+    @torch.no_grad()
+    def predict_bool(self, x: torch.Tensor, threshold: float = 0.5) -> torch.Tensor:
+        """Convenience inference method"""
+        probs = self.forward(x, return_logits=False)
+        return probs >= threshold
