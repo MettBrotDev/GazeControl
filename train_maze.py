@@ -27,13 +27,15 @@ from torch.distributions import Categorical
 import matplotlib.pyplot as plt
 
 from models import GazeControlModel, Agent, PerceptualLoss, GradientDifferenceLoss
-from config import Config          
+from config import Config
 import json
+
 
 def clear_memory():
     if torch.cuda.is_available():
         gc.collect()
         torch.cuda.empty_cache()
+
 
 def crop_patch(image, gaze, crop_size, resize_to=None):
     """Crop a patch around the gaze from a batched image tensor.
@@ -60,7 +62,7 @@ def crop_patch(image, gaze, crop_size, resize_to=None):
         x1_src = max(0, min(W, x1))
         y1_src = max(0, min(H, y1))
 
-        crop = image[i:i+1, :, y0_src:y1_src, x0_src:x1_src]
+        crop = image[i:i + 1, :, y0_src:y1_src, x0_src:x1_src]
 
         # Compute non-negative padding to reach target crop size
         pad_left = max(0, -x0)
@@ -70,18 +72,19 @@ def crop_patch(image, gaze, crop_size, resize_to=None):
 
         if pad_left > 0 or pad_right > 0 or pad_top > 0 or pad_bottom > 0:
             # zero pad out-of-bounds regions for more intuitive behavior
-            crop = F.pad(crop, (pad_left, pad_right, pad_top, pad_bottom), mode='constant', value=0.0)
+            crop = F.pad(crop, (pad_left, pad_right, pad_top, pad_bottom), mode="constant", value=0.0)
 
         # Ensure exact target crop size (in case of rounding)
         if crop.shape[-2:] != (ch, cw):
-            crop = F.interpolate(crop, size=(ch, cw), mode='bilinear', align_corners=False)
+            crop = F.interpolate(crop, size=(ch, cw), mode="bilinear", align_corners=False)
 
         crops.append(crop)
 
     crops = torch.cat(crops, dim=0)
     if resize_to is not None and (resize_to[0] != ch or resize_to[1] != cw):
-        crops = F.interpolate(crops, size=resize_to, mode='bilinear', align_corners=False)
+        crops = F.interpolate(crops, size=resize_to, mode="bilinear", align_corners=False)
     return crops
+
 
 def _make_gaussian_mask(H, W, gaze_xy, sigma_frac=0.25, device="cpu"):
     """Create soft Gaussian masks centered at gaze_xy (normalized [0,1]).
@@ -108,16 +111,19 @@ def eight_dir_deltas(max_move: float, device: str):
     """Return 8 unit directions scaled by max_move in order: E, NE, N, NW, W, SW, S, SE.
     Shape: (8, 2)
     """
-    dirs = torch.tensor([
-        [1.0, 0.0],   # E
-        [1.0, 1.0],   # NE
-        [0.0, 1.0],   # N
-        [-1.0, 1.0],  # NW
-        [-1.0, 0.0],  # W
-        [-1.0, -1.0], # SW
-        [0.0, -1.0],  # S
-        [1.0, -1.0],  # SE
-    ], device=device)
+    dirs = torch.tensor(
+        [
+            [1.0, 0.0],  # E
+            [1.0, 1.0],  # NE
+            [0.0, 1.0],  # N
+            [-1.0, 1.0],  # NW
+            [-1.0, 0.0],  # W
+            [-1.0, -1.0],  # SW
+            [0.0, -1.0],  # S
+            [1.0, -1.0],  # SE
+        ],
+        device=device,
+    )
     # normalize diagonals to unit length, then scale
     dirs = dirs / torch.clamp(dirs.norm(dim=1, keepdim=True), min=1e-6)
     return dirs * max_move
@@ -125,14 +131,15 @@ def eight_dir_deltas(max_move: float, device: str):
 
 class MazeDataset(Dataset):
     """Maze dataset that reads images and labels from generated metadata JSON."""
-    def __init__(self, root_dir: str, split: str = 'train', transform=None):
+
+    def __init__(self, root_dir: str, split: str = "train", transform=None):
         super().__init__()
         self.root = root_dir
         self.split = split
         self.transform = transform
-        self.img_dir = os.path.join(root_dir, 'imgs', split)
-        self.meta_path = os.path.join(root_dir, f'{split}_metadata.json')
-        with open(self.meta_path, 'r') as f:
+        self.img_dir = os.path.join(root_dir, "imgs", split)
+        self.meta_path = os.path.join(root_dir, f"{split}_metadata.json")
+        with open(self.meta_path, "r") as f:
             self.meta = json.load(f)
         # Keep full entries so we can access start/end if present
         self.samples = self.meta
@@ -142,22 +149,22 @@ class MazeDataset(Dataset):
 
     def __getitem__(self, idx):
         entry = self.samples[idx]
-        fname = entry['filename']
-        label = int(entry['label'])
+        fname = entry["filename"]
+        label = int(entry["label"])
         p = os.path.join(self.img_dir, fname)
 
         # Load image
-        img_pil = Image.open(p).convert('RGB')
+        img_pil = Image.open(p).convert("RGB")
 
         # Just take gridsize like this for now
         self.grid_size = Config.IMG_SIZE[0] // 4
 
         # Compute start gaze from metadata grid coordinate
         sx = sy = None
-        if isinstance(entry.get('start'), dict):
+        if isinstance(entry.get("start"), dict):
             try:
-                sx = int(entry['start'].get('x'))
-                sy = int(entry['start'].get('y'))
+                sx = int(entry["start"].get("x"))
+                sy = int(entry["start"].get("y"))
             except Exception:
                 sx = sy = None
         if sx is not None and sy is not None:
@@ -188,69 +195,83 @@ def train(
     run_dir = os.path.join("runs", log_name)
     os.makedirs(run_dir, exist_ok=True)
     # TensorBoard disabled; use W&B if provided
-    
+
     # Track images seen and checkpoint frequency
     imgs_seen = 0
     next_save_at = 5000
 
     # Setup transforms
     # NOTE: Decoder was pretrained on [-1,1] range (Tanh output), so we must match that range
-    transform_img = transforms.Compose([
-        transforms.Resize(Config.IMG_SIZE),
-        transforms.ToTensor(),
-        transforms.Lambda(lambda x: x * 2.0 - 1.0),  # [0,1] → [-1,1]
-    ])
-    transform_mnist = transforms.Compose([
-        transforms.Resize(Config.IMG_SIZE),
-        transforms.ToTensor(),
-        transforms.Lambda(lambda x: x.repeat(3,1,1)),
-        transforms.Lambda(lambda x: x * 2.0 - 1.0),  # [0,1] → [-1,1]
-    ])
+    transform_img = transforms.Compose(
+        [
+            transforms.Resize(Config.IMG_SIZE),
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x * 2.0 - 1.0),  # [0,1] → [-1,1]
+        ]
+    )
+    transform_mnist = transforms.Compose(
+        [
+            transforms.Resize(Config.IMG_SIZE),
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
+            transforms.Lambda(lambda x: x * 2.0 - 1.0),  # [0,1] → [-1,1]
+        ]
+    )
 
     # Use Maze dataset and its metadata labels
     # Allow overriding maze dataset root via config (must contain imgs/{train,val,test} and *_metadata.json)
-    maze_root = getattr(Config, 'MAZE_ROOT', os.path.join('./Data', 'Maze'))
-    if not os.path.exists(os.path.join(maze_root, 'imgs', 'train')):
-        raise FileNotFoundError(f"Maze dataset not found at {maze_root}. Set Config.MAZE_ROOT to your dataset root or generate it with Datasets/generate_maze.py")
-    train_dataset = MazeDataset(maze_root, split='train', transform=transform_img)
-    val_dataset = MazeDataset(maze_root, split='val', transform=transform_img)
+    maze_root = getattr(Config, "MAZE_ROOT", os.path.join("./Data", "Maze"))
+    if not os.path.exists(os.path.join(maze_root, "imgs", "train")):
+        raise FileNotFoundError(
+            f"Maze dataset not found at {maze_root}. Set Config.MAZE_ROOT to your dataset root or generate it with Datasets/generate_maze.py"
+        )
+    train_dataset = MazeDataset(maze_root, split="train", transform=transform_img)
+    val_dataset = MazeDataset(maze_root, split="val", transform=transform_img)
 
     train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, shuffle=False, num_workers=0)
 
     # Initialize model, loss and optimizer
-    model = GazeControlModel(encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
-                             state_size=Config.HIDDEN_SIZE,
-                             img_size=Config.IMG_SIZE,
-                             fovea_size=Config.FOVEA_OUTPUT_SIZE,
-                             pos_encoding_dim=Config.POS_ENCODING_DIM,
-                             lstm_layers=Config.LSTM_LAYERS,
-                             decoder_latent_ch=Config.DECODER_LATENT_CH,
-                             k_scales=getattr(Config, 'K_SCALES', 3),
-                             fuse_to_dim=getattr(Config, 'FUSION_TO_DIM', None),
-                             fusion_hidden_mul=getattr(Config, 'FUSION_HIDDEN_MUL', 2.0),
-                             encoder_c1=getattr(Config, 'ENCODER_C1', None),
-                             encoder_c2=getattr(Config, 'ENCODER_C2', None)).to(Config.DEVICE)
+    model = GazeControlModel(
+        encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
+        state_size=Config.HIDDEN_SIZE,
+        img_size=Config.IMG_SIZE,
+        fovea_size=Config.FOVEA_OUTPUT_SIZE,
+        pos_encoding_dim=Config.POS_ENCODING_DIM,
+        lstm_layers=Config.LSTM_LAYERS,
+        decoder_latent_ch=Config.DECODER_LATENT_CH,
+        k_scales=getattr(Config, "K_SCALES", 3),
+        fuse_to_dim=getattr(Config, "FUSION_TO_DIM", None),
+        fusion_hidden_mul=getattr(Config, "FUSION_HIDDEN_MUL", 2.0),
+        encoder_c1=getattr(Config, "ENCODER_C1", None),
+        encoder_c2=getattr(Config, "ENCODER_C2", None),
+    ).to(Config.DEVICE)
 
     # Load a full pretrained model checkpoint (e.g., random-move baseline) if configured
-    ckpt_path = getattr(Config, 'PRETRAINED_MODEL_PATH', "")
+    ckpt_path = getattr(Config, "PRETRAINED_MODEL_PATH", "")
     if load_full_model and ckpt_path:
         if os.path.exists(ckpt_path):
             print(f"Loading full model checkpoint from {ckpt_path}")
             raw = torch.load(ckpt_path, map_location=Config.DEVICE)
             # Handle common checkpoint formats
-            if isinstance(raw, dict) and 'state_dict' in raw:
-                state = raw['state_dict']
-            elif isinstance(raw, dict) and 'model_state_dict' in raw:
-                state = raw['model_state_dict']
+            if isinstance(raw, dict) and "state_dict" in raw:
+                state = raw["state_dict"]
+            elif isinstance(raw, dict) and "model_state_dict" in raw:
+                state = raw["model_state_dict"]
             else:
                 state = raw
             try:
                 # Log match stats
                 model_state = model.state_dict()
-                matched = [k for k in state.keys() if k in model_state and getattr(model_state[k], 'shape', None) == getattr(state[k], 'shape', None)]
+                matched = [
+                    k
+                    for k in state.keys()
+                    if k in model_state and getattr(model_state[k], "shape", None) == getattr(state[k], "shape", None)
+                ]
                 res = model.load_state_dict(state, strict=False)
-                print(f"Full checkpoint loaded: matched={len(matched)} missing={len(getattr(res, 'missing_keys', []))} unexpected={len(getattr(res, 'unexpected_keys', []))}")
+                print(
+                    f"Full checkpoint loaded: matched={len(matched)} missing={len(getattr(res, 'missing_keys', []))} unexpected={len(getattr(res, 'unexpected_keys', []))}"
+                )
             except Exception as e:
                 print(f"Warning: failed to load full checkpoint ({e}).")
         else:
@@ -267,9 +288,9 @@ def train(
             print(f"Strict load failed ({e}); attempting non-strict load")
             model.decoder.load_state_dict(decoder_state, strict=False)
         print("Pretrained decoder loaded successfully!")
-        
+
         # Optionally freeze decoder for first few epochs
-        if hasattr(Config, 'FREEZE_DECODER_EPOCHS') and Config.FREEZE_DECODER_EPOCHS > 0:
+        if hasattr(Config, "FREEZE_DECODER_EPOCHS") and Config.FREEZE_DECODER_EPOCHS > 0:
             print(f"Freezing decoder for first {Config.FREEZE_DECODER_EPOCHS} epoch(s)")
             for param in model.decoder.parameters():
                 param.requires_grad = False
@@ -278,29 +299,30 @@ def train(
     else:
         print("Decoder pretrain disabled; continuing with current model weights")
 
-    # No Gaussian std for discrete policy
-
     # Build separate optimizers for policy/value heads and backbone
-    agent = Agent(state_size=Config.HIDDEN_SIZE, pos_encoding_dim=Config.POS_ENCODING_DIM,
-                  stop_init_bias=float(getattr(Config, 'RL_STOP_INIT_BIAS', -8.0))).to(Config.DEVICE)
+    agent = Agent(
+        state_size=Config.HIDDEN_SIZE,
+        pos_encoding_dim=Config.POS_ENCODING_DIM,
+        stop_init_bias=float(getattr(Config, "RL_STOP_INIT_BIAS", -8.0)),
+    ).to(Config.DEVICE)
     # If a checkpoint was requested via --load-full and it contains an agent_state_dict, load it now
     if load_full_model and ckpt_path and os.path.exists(ckpt_path):
         try:
             raw2 = torch.load(ckpt_path, map_location=Config.DEVICE)
-            if isinstance(raw2, dict) and 'agent_state_dict' in raw2:
-                agent.load_state_dict(raw2['agent_state_dict'], strict=False)
+            if isinstance(raw2, dict) and "agent_state_dict" in raw2:
+                agent.load_state_dict(raw2["agent_state_dict"], strict=False)
                 print("Loaded agent_state_dict from checkpoint")
         except Exception as e:
             print(f"Warning: failed to load agent_state_dict ({e})")
     policy_params = list(agent.parameters())
     backbone_params = list(model.parameters())
-    
+
     # Print parameter counts
-    def count_params(module, only_trainable=False):
+    def count_params(module, only_trainable: bool = False):
         if only_trainable:
             return sum(p.numel() for p in module.parameters() if p.requires_grad)
         return sum(p.numel() for p in module.parameters())
-    
+
     encoder_params = count_params(model.encoder)
     fusion_params = count_params(model.fusion)
     lstm_params = count_params(model.lstm)
@@ -308,21 +330,21 @@ def train(
     decoder_trainable = count_params(model.decoder, only_trainable=True)
     total_model_params = count_params(model)
     agent_params = count_params(agent)
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("MODEL ARCHITECTURE SUMMARY")
-    print("="*60)
+    print("=" * 60)
     print(f"Encoder:    {encoder_params:>12,} params ({encoder_params/1e6:.2f}M)")
     print(f"Fusion MLP: {fusion_params:>12,} params ({fusion_params/1e6:.2f}M)")
     print(f"LSTM:       {lstm_params:>12,} params ({lstm_params/1e6:.2f}M)")
     print(f"Decoder:    {decoder_params:>12,} params ({decoder_params/1e6:.2f}M) {'[FROZEN]' if decoder_trainable == 0 else ''}")
-    print(f"{'-'*60}")
+    print(f"{'-' * 60}")
     print(f"Total Model:{total_model_params:>12,} params ({total_model_params/1e6:.2f}M)")
     print(f"Trainable:  {count_params(model, only_trainable=True):>12,} params ({count_params(model, only_trainable=True)/1e6:.2f}M)")
     print(f"Agent (RL): {agent_params:>12,} params ({agent_params/1e6:.2f}M)")
-    print(f"{'-'*60}")
+    print(f"{'-' * 60}")
     print(f"GRAND TOTAL:{total_model_params + agent_params:>12,} params ({(total_model_params + agent_params)/1e6:.2f}M)")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     # Lazily create policy optimizer when RL becomes enabled
     opt_policy = None
@@ -331,29 +353,33 @@ def train(
         # Freeze policy/value heads when RL globally disabled
         for p in policy_params:
             p.requires_grad = False
-    opt_backbone = torch.optim.AdamW(backbone_params, lr=getattr(Config, 'RL_BACKBONE_LR', Config.LEARNING_RATE), weight_decay=Config.WEIGHT_DECAY)  # RL backbone lr not in config rn
+    opt_backbone = torch.optim.AdamW(
+        backbone_params,
+        lr=getattr(Config, "RL_BACKBONE_LR", Config.LEARNING_RATE),
+        weight_decay=Config.WEIGHT_DECAY,
+    )
 
     l1_loss = torch.nn.L1Loss()
     # Store loss weights as local variables for consistency with pretrain script
-    l1_weight = float(getattr(Config, 'L1_WEIGHT', 1.0))
+    l1_weight = float(getattr(Config, "L1_WEIGHT", 1.0))
     # Optional perceptual loss on final reconstruction (disabled if weight <= 0)
-    perc_weight = float(getattr(Config, 'PERC_WEIGHT', 0.0))
+    perc_weight = float(getattr(Config, "PERC_WEIGHT", 0.0))
     criterion_perc = PerceptualLoss().to(Config.DEVICE) if perc_weight > 0.0 else None
     # MS-SSIM loss
-    ssim_weight = float(getattr(Config, 'SSIM_WEIGHT', 0.0))
+    ssim_weight = float(getattr(Config, "SSIM_WEIGHT", 0.0))
     use_ssim = ssim_weight > 0.0
     # Gradient Difference Loss (GDL) for sharp edges
-    gdl_weight = float(getattr(Config, 'GDL_WEIGHT', 0.0))
+    gdl_weight = float(getattr(Config, "GDL_WEIGHT", 0.0))
     criterion_gdl = GradientDifferenceLoss().to(Config.DEVICE) if gdl_weight > 0.0 else None
     # Foreground mask for L1 loss
-    use_fg_mask = bool(getattr(Config, 'USE_FG_MASK', False))
-    fg_thresh = float(getattr(Config, 'FG_THRESH', 0.1))
-    bg_weight = float(getattr(Config, 'BG_WEIGHT', 0.1))
+    use_fg_mask = bool(getattr(Config, "USE_FG_MASK", False))
+    fg_thresh = float(getattr(Config, "FG_THRESH", 0.1))
+    bg_weight = float(getattr(Config, "BG_WEIGHT", 0.1))
 
     # RL is always fully attached; no detach/ramp schedule
 
     # Schedule for freezing backbone during initial RL-only epochs, relative to RL start
-    rl_only_epochs = int(getattr(Config, 'RL_ONLY_EPOCHS', 0)) if not global_rl_disabled else 0
+    rl_only_epochs = int(getattr(Config, "RL_ONLY_EPOCHS", 0)) if not global_rl_disabled else 0
     rl_start_epoch = 0 if global_rl_disabled else int(recon_warmup_epochs)
     backbone_frozen = False
     model.train()
@@ -364,7 +390,7 @@ def train(
         model.train()
         agent.train()
         # Phase gating
-        warmup_active = (epoch < recon_warmup_epochs)
+        warmup_active = epoch < recon_warmup_epochs
         rl_enabled = (not global_rl_disabled) and (not warmup_active)
         cls_enabled = not (bool(no_cls_warmup) and warmup_active)
 
@@ -372,7 +398,7 @@ def train(
         if rl_enabled and opt_policy is None:
             opt_policy = torch.optim.AdamW(
                 policy_params,
-                lr=getattr(Config, 'RL_POLICY_LR', Config.LEARNING_RATE),
+                lr=getattr(Config, "RL_POLICY_LR", Config.LEARNING_RATE),
                 weight_decay=Config.WEIGHT_DECAY,
             )
             # Ensure agent params are trainable
@@ -394,13 +420,15 @@ def train(
                 backbone_frozen = False
 
         # Unfreeze decoder after FREEZE_DECODER_EPOCHS from start of training
-        if (hasattr(Config, 'FREEZE_DECODER_EPOCHS') and 
-            Config.FREEZE_DECODER_EPOCHS > 0 and 
-            epoch == Config.FREEZE_DECODER_EPOCHS):
+        if (
+            hasattr(Config, "FREEZE_DECODER_EPOCHS")
+            and Config.FREEZE_DECODER_EPOCHS > 0
+            and epoch == Config.FREEZE_DECODER_EPOCHS
+        ):
             print(f"Unfreezing decoder at epoch {epoch}")
             for param in model.decoder.parameters():
                 param.requires_grad = True
-                
+
         for batch_idx, batch in enumerate(train_loader):
             # Support datasets that return (image, label, start_xy)
             if isinstance(batch, (list, tuple)) and len(batch) >= 3:
@@ -411,20 +439,24 @@ def train(
             total_rec_loss = torch.tensor(0.0, device=Config.DEVICE)
             image = images.to(Config.DEVICE)
             labels = labels.to(Config.DEVICE)
-            
+
             # Start gaze position
             num_steps = Config.MAX_STEPS
             B = image.size(0)
             if starts_xy is not None:
                 base = starts_xy.to(Config.DEVICE)
-                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+                jitter_r = float(getattr(Config, "START_JITTER", 0.0) or 0.0)
                 if jitter_r > 0.0:
                     jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
                     base = base + jitter
                 gaze = base.clamp(0.0, 1.0)
-            elif hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
-                base = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1)
-                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+            elif hasattr(Config, "START_GAZE") and getattr(Config, "START_GAZE") is not None:
+                base = (
+                    torch.tensor(list(getattr(Config, "START_GAZE")), device=Config.DEVICE)
+                    .view(1, 2)
+                    .repeat(B, 1)
+                )
+                jitter_r = float(getattr(Config, "START_JITTER", 0.0) or 0.0)
                 if jitter_r > 0.0:
                     jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
                     base = base + jitter
@@ -436,21 +468,17 @@ def train(
             state = model.init_memory(B, Config.DEVICE)
             reconstruction = None
 
-            attach_alpha = 1.0
-
-            # No coupling schedule to log anymore
-
             # RL rollouts storage
-            logprobs = []   # list of (B,)
-            values = []     # list of (B,)
+            logprobs = []  # list of (B,)
+            values = []  # list of (B,)
             entropies = []  # list of (B,)
             # For PPO: store per-step state/action to recompute new log probs
-            ppo_h = []            # list of (B,H)
-            ppo_gaze = []         # list of (B,2)
-            ppo_move_idx = []     # list of (B,)
-            ppo_stop = []         # list of (B,)
-            ppo_old_lp = []       # list of (B,)
-            ppo_old_v = []        # list of (B,)
+            ppo_h = []  # list of (B,H)
+            ppo_gaze = []  # list of (B,2)
+            ppo_move_idx = []  # list of (B,)
+            ppo_stop = []  # list of (B,)
+            ppo_old_lp = []  # list of (B,)
+            ppo_old_v = []  # list of (B,)
             # record gaze positions per step (pre-action)
             gaze_path = []
             # Early stopping per-sample
@@ -472,7 +500,7 @@ def train(
                 # Keep full batch gaze history on device for final visibility mask
                 gaze_path.append(gaze.detach().clone())
                 # Multi-scale glimpse: k scales with sizes base*(2**i), all resized to FOVEA_OUTPUT_SIZE
-                k_scales = int(getattr(Config, 'K_SCALES', 3))
+                k_scales = int(getattr(Config, "K_SCALES", 3))
                 base_h, base_w = Config.FOVEA_CROP_SIZE
                 patches = []
                 for i in range(k_scales):
@@ -488,16 +516,20 @@ def train(
 
                 if use_step_mask:
                     # Build current-step mask and merge into cumulative visibility
-                    step_mask = _make_gaussian_mask(H, W, gaze[alive_idx], sigma_frac=sigma_step, device=Config.DEVICE)  # (Ba,1,H,W)
+                    step_mask = _make_gaussian_mask(
+                        H, W, gaze[alive_idx], sigma_frac=sigma_step, device=Config.DEVICE
+                    )  # (Ba,1,H,W)
                     sum_mask[alive_idx] = torch.maximum(sum_mask[alive_idx], step_mask)
                     # Compute masked per-sample L1 over union mask
                     mask3 = sum_mask[alive_idx].expand(-1, 3, H, W)
-                    per_sample_l1 = (((reconstruction[alive_idx] - image[alive_idx]).abs() * mask3).flatten(1).sum(dim=1) /
-                                     (mask3.flatten(1).sum(dim=1) + 1e-6))
+                    per_sample_l1 = (
+                        ((reconstruction[alive_idx] - image[alive_idx]).abs() * mask3).flatten(1).sum(dim=1)
+                        / (mask3.flatten(1).sum(dim=1) + 1e-6)
+                    )
                     l1_m = per_sample_l1.mean()
                 else:
                     l1_m = 0
-                
+
                 # Weight increases linearly between STEP_LOSS_MIN and STEP_LOSS_MAX across steps
                 step_frac = (step + 1) / max(1, num_steps)
                 min_w = getattr(Config, "STEP_LOSS_MIN", 0.02)
@@ -505,11 +537,15 @@ def train(
                 weight = min_w + (max_w - min_w) * step_frac
 
                 # Compute L1 loss alive subset (masked-only when enabled)
-                l1_step = (l1_m if use_step_mask else l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight)
+                l1_step = (
+                    l1_m if use_step_mask else l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight
+                )
 
                 # Compute MS-SSIM loss for this step if enabled on alive subset
                 if use_ssim:
-                    mssim_step_val = ms_ssim(reconstruction[alive_idx], image[alive_idx], data_range=2.0, size_average=True)
+                    mssim_step_val = ms_ssim(
+                        reconstruction[alive_idx], image[alive_idx], data_range=2.0, size_average=True
+                    )
                     ssim_step = (1.0 - mssim_step_val) * weight
                 else:
                     ssim_step = 0.0
@@ -520,7 +556,7 @@ def train(
                 else:
                     gdl_step = 0.0
 
-                #only use masked loss
+                # only use masked loss
                 gdl_step = 0.0
 
                 rec_error = (
@@ -534,34 +570,43 @@ def train(
                 # Choose action: RL policy (move + stop) or uniform random over 8 directions
                 if rl_enabled:
                     h_t = state[0][-1]  # (B,H)
-                    move_logits, decision_logits_step, stop_logit, value_t = agent.full_policy(h_t, gaze)
+                    h_det = h_t.detach()
+                    gaze_det = gaze.detach()
+                    move_logits, decision_logits_step, stop_logit, value_t = agent.full_policy(h_det, gaze_det)
                     cat = Categorical(logits=move_logits)
-                    move_idx = cat.sample()               # (B,)
-                    move_lp = cat.log_prob(move_idx)      # (B,)
-                    move_ent = cat.entropy()              # (B,)
+                    move_idx = cat.sample()  # (B,)
+                    move_lp = cat.log_prob(move_idx)  # (B,)
+                    move_ent = cat.entropy()  # (B,)
                     # Bernoulli stop
                     stop_prob = torch.sigmoid(stop_logit)
                     stop_dist = torch.distributions.Bernoulli(probs=stop_prob)
-                    stop_sample = stop_dist.sample()       # (B,)
+                    stop_sample = stop_dist.sample()  # (B,)
                     # Enforce a minimum number of moves before allowing stop
-                    min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
+                    min_steps = int(getattr(Config, "MIN_STEPS_BEFORE_STOP", 10))
                     if step < min(min_steps, num_steps) - 1:
                         stop_sample = torch.zeros_like(stop_sample)
                     # Confidence gating: only allow STOP if classifier confidence >= threshold
-                    conf_thresh = float(getattr(Config, 'STOP_CONF_THRESH', 0.9))
+                    conf_thresh = float(getattr(Config, "STOP_CONF_THRESH", 0.9))
                     if conf_thresh is not None and conf_thresh > 0.0:
                         with torch.no_grad():
                             conf = torch.softmax(decision_logits_step, dim=1).amax(dim=1)
-                        stop_sample = torch.where(conf >= conf_thresh, stop_sample, torch.zeros_like(stop_sample))
+                        stop_sample = torch.where(
+                            conf >= conf_thresh, stop_sample, torch.zeros_like(stop_sample)
+                        )
                     stop_lp = stop_dist.log_prob(stop_sample)  # (B,)
                     # Compose joint logprob and entropy (approximate add)
                     logprob = move_lp + stop_lp
-                    entropy = move_ent + (-(stop_prob * torch.log(stop_prob.clamp_min(1e-8)) + (1 - stop_prob) * torch.log((1 - stop_prob).clamp_min(1e-8))))
+                    entropy = move_ent + (
+                        -(
+                            stop_prob * torch.log(stop_prob.clamp_min(1e-8))
+                            + (1 - stop_prob) * torch.log((1 - stop_prob).clamp_min(1e-8))
+                        )
+                    )
                     logprobs.append(logprob)
                     values.append(value_t)
                     entropies.append(entropy)
                     # PPO storage
-                    if bool(getattr(Config, 'USE_PPO', False)):
+                    if bool(getattr(Config, "USE_PPO", False)):
                         ppo_h.append(h_t.detach())
                         ppo_gaze.append(gaze.detach())
                         ppo_move_idx.append(move_idx.detach())
@@ -589,8 +634,8 @@ def train(
                 # Apply action for next step
                 gaze = torch.clamp(gaze + delta, 0.0, 1.0)
                 # Keep gaze within central bounds if enabled
-                if getattr(Config, 'USE_GAZE_BOUNDS', False):
-                    frac = float(getattr(Config, 'GAZE_BOUND_FRACTION', 0.1))
+                if getattr(Config, "USE_GAZE_BOUNDS", False):
+                    frac = float(getattr(Config, "GAZE_BOUND_FRACTION", 0.1))
                     lo, hi = frac, 1.0 - frac
                     gaze = gaze.clamp(min=lo, max=hi)
 
@@ -601,7 +646,7 @@ def train(
 
             # Final reconstruction from final LSTM state with larger weight
             final_recon = model.decode_from_state(state)
-            
+
             # Optional: restrict final reconstruction loss to what the agent actually observed
             use_final_mask = bool(getattr(Config, "USE_FINAL_VISIBILITY_MASK", False)) and len(gaze_path) > 0
             final_l1 = None
@@ -610,12 +655,16 @@ def train(
                 H, W = Config.IMG_SIZE
                 # Base sigma as fraction of image based on fovea size
                 sigma_base = Config.FOVEA_OUTPUT_SIZE[0] ** float(getattr(Config, "K_SCALES", 3)) / max(H, W)
-                sigma_frac_final = sigma_base * float(getattr(Config, "FINAL_MASK_SIGMA_SCALE", getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35)))
+                sigma_frac_final = sigma_base * float(
+                    getattr(Config, "FINAL_MASK_SIGMA_SCALE", getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35))
+                )
                 # Build per-step masks and union across actually executed steps per sample
                 T_obs = len(gaze_path)
                 masks_t = []
                 for t in range(T_obs):
-                    masks_t.append(_make_gaussian_mask(H, W, gaze_path[t], sigma_frac=sigma_frac_final, device=Config.DEVICE))  # (B,1,H,W)
+                    masks_t.append(
+                        _make_gaussian_mask(H, W, gaze_path[t], sigma_frac=sigma_frac_final, device=Config.DEVICE)
+                    )  # (B,1,H,W)
                 masks_stack = torch.stack(masks_t, dim=0)  # (T,B,1,H,W)
 
                 # Determine executed steps per-sample; include all steps if never stopped
@@ -631,8 +680,10 @@ def train(
                 final_mask3 = final_mask.expand(-1, 3, H, W)
 
                 # Masked per-sample L1 averaged over visible area only
-                per_sample_l1 = (((final_recon - image).abs() * final_mask3).flatten(1).sum(dim=1) /
-                                   (final_mask3.flatten(1).sum(dim=1) + 1e-6))
+                per_sample_l1 = (
+                    ((final_recon - image).abs() * final_mask3).flatten(1).sum(dim=1)
+                    / (final_mask3.flatten(1).sum(dim=1) + 1e-6)
+                )
                 final_l1 = per_sample_l1.mean()
 
                 # If using GDL, use manual gdl inside mask
@@ -655,12 +706,12 @@ def train(
                     masked_final_gdl = dx_loss + dy_loss
             else:
                 final_l1 = l1_loss(final_recon, image)
-            
+
             # Optional perceptual loss
             final_perc = None
             if criterion_perc is not None:
                 final_perc = criterion_perc(final_recon, image)
-            
+
             # Optional MS-SSIM loss
             final_ssim = None
             if use_ssim:
@@ -675,7 +726,7 @@ def train(
                     final_gdl = masked_final_gdl
                 else:
                     final_gdl = criterion_gdl(final_recon, image)
-            
+
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
             final_loss = l1_weight * final_l1 * final_mult
             if final_perc is not None and perc_weight > 0.0:
@@ -687,43 +738,34 @@ def train(
 
             # Compute final decision logits for those never stopped
             T_exec = len(values)
-            not_stopped = (last_step < 0)
+            not_stopped = last_step < 0
             if not_stopped.any():
                 h_T = state[0][-1]
                 _mT, decision_logits_T, _sT, _vT = agent.full_policy(h_T, gaze)
                 final_decision_logits[not_stopped] = decision_logits_T[not_stopped]
-                last_step[not_stopped] = int(getattr(Config, 'MAX_STEPS', 20)) - 1
+                last_step[not_stopped] = int(getattr(Config, "MAX_STEPS", 20)) - 1
             # Classification loss on final decisions
             ce_cls = nn.CrossEntropyLoss()
             cls_loss = ce_cls(final_decision_logits, labels)
 
             # Compute non-RL losses first and step backbone once
-            total_nonrl = total_rec_loss + final_loss + (cls_loss if cls_enabled else 0.0)
+            total_loss = total_rec_loss + final_loss + (cls_loss if cls_enabled else 0.0)
 
-            # Backpropagation for non-RL (model/backbone/decoder)
-            if not backbone_frozen:
-                opt_backbone.zero_grad()
-            total_nonrl.backward()
-            # Gradient clipping for stability (backbone only here)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=Config.GRAD_CLIP_NORM)
-            if not backbone_frozen:
-                opt_backbone.step()
-
-            # ----- RL loss (A2C/GAE or PPO) -----
+            # ----- RL loss (A2C/GAE) -----
             rl_loss = torch.tensor(0.0, device=Config.DEVICE)
             if rl_enabled and len(values) > 0:
-                gamma = float(getattr(Config, 'RL_GAMMA', 0.95))
-                lam = float(getattr(Config, 'RL_LAMBDA', 0.95))
-                scale = float(getattr(Config, 'RL_REWARD_SCALE', 1.0))
+                gamma = float(getattr(Config, "RL_GAMMA", 0.95))
+                lam = float(getattr(Config, "RL_LAMBDA", 0.95))
+                scale = float(getattr(Config, "RL_REWARD_SCALE", 1.0))
                 preds = final_decision_logits.argmax(dim=1)
                 r_final = (preds == labels).float() * scale  # (B,)
 
                 # Stack per-step tensors with executed length T, then pad to MAX_STEPS for safe indexing/masking
-                values_t_exec = torch.stack(values)      # (T,B)
+                values_t_exec = torch.stack(values)  # (T,B)
                 logprobs_t_exec = torch.stack(logprobs)  # (T,B)
                 entropies_t_exec = torch.stack(entropies)  # (T,B)
                 T_exec = values_t_exec.size(0)
-                max_Steps = int(getattr(Config, 'MAX_STEPS', 20))
+                max_Steps = int(getattr(Config, "MAX_STEPS", 20))
 
                 def pad_to_max(t_TB):
                     if t_TB.size(0) == max_Steps:
@@ -732,19 +774,19 @@ def train(
                     pad = torch.zeros((pad_len, *t_TB.shape[1:]), device=t_TB.device, dtype=t_TB.dtype)
                     return torch.cat([t_TB, pad], dim=0)
 
-                values_t = pad_to_max(values_t_exec)          # (max_Steps,B)
-                logprobs_t = pad_to_max(logprobs_t_exec)      # (max_Steps,B)
-                entropies_t = pad_to_max(entropies_t_exec)    # (max_Steps,B)
+                values_t = pad_to_max(values_t_exec)  # (max_Steps,B)
+                logprobs_t = pad_to_max(logprobs_t_exec)  # (max_Steps,B)
+                entropies_t = pad_to_max(entropies_t_exec)  # (max_Steps,B)
 
                 rewards_t = torch.zeros((max_Steps, labels.size(0)), device=Config.DEVICE)
                 # Per-step time penalty to encourage shorter trajectories
                 # Also additionally penalize taking less steps when final classification is wrong
-                step_pen = float(getattr(Config, 'RL_STEP_PENALTY', 0.0))
+                step_pen = float(getattr(Config, "RL_STEP_PENALTY", 0.0))
                 ls = last_step.clone()
                 ls[ls < 0] = max_Steps - 1
                 t_idx = torch.arange(max_Steps, device=Config.DEVICE).unsqueeze(1)  # (T,1)
                 exec_masks_t = (t_idx <= ls.unsqueeze(0)).to(values_t.dtype)  # (max_Steps,B)
-                cont_masks_t = (t_idx < ls.unsqueeze(0)).to(values_t.dtype)   # (max_Steps,B)
+                cont_masks_t = (t_idx < ls.unsqueeze(0)).to(values_t.dtype)  # (max_Steps,B)
                 # Per-step time penalty on each executed step
                 if step_pen != 0.0:
                     rewards_t = rewards_t - step_pen * exec_masks_t
@@ -754,8 +796,10 @@ def train(
                 # Additional penalty for not executing all steps if final decision is wrong
                 # This is scaled super high to strongly encourage running to full length when unsure
                 incorrect = (preds != labels).float()
-                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 200
-                rewards_t[ls_clamped, batch_arange] = rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
+                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float() * 200
+                rewards_t[ls_clamped, batch_arange] = (
+                    rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
+                )
 
                 with torch.no_grad():
                     advantages = torch.zeros_like(values_t)
@@ -771,158 +815,40 @@ def train(
                         next_value = v_t
                     returns = advantages + values_t
 
-                if bool(getattr(Config, 'RL_NORM_ADV', False)):
+                if bool(getattr(Config, "RL_NORM_ADV", False)):
                     mask_sum = exec_masks_t.sum().clamp_min(1.0)
                     adv_mean = (advantages * exec_masks_t).sum() / mask_sum
                     adv_var = (((advantages - adv_mean) ** 2) * exec_masks_t).sum() / mask_sum
                     adv_std = adv_var.sqrt().clamp_min(1e-6)
                     advantages = (advantages - adv_mean) / adv_std
 
-                use_ppo = bool(getattr(Config, 'USE_PPO', False))
-                if not use_ppo:
-                    # ----- A2C single update on agent only -----
-                    denom = exec_masks_t.sum().clamp_min(1.0)
-                    policy_loss = -((logprobs_t * advantages.detach()) * exec_masks_t).sum() / denom
-                    value_loss = (((values_t - returns) ** 2) * exec_masks_t).sum() / denom
-                    entropy_loss = -(entropies_t * exec_masks_t).sum() / denom
-                    value_coef = float(getattr(Config, 'RL_VALUE_COEF', 0.5))
-                    entropy_coef = float(getattr(Config, 'RL_ENTROPY_COEF', 0.01))
-                    rl_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
+                denom = exec_masks_t.sum().clamp_min(1.0)
+                policy_loss = -((logprobs_t * advantages.detach()) * exec_masks_t).sum() / denom
+                value_loss = (((values_t - returns) ** 2) * exec_masks_t).sum() / denom
+                entropy_loss = -(entropies_t * exec_masks_t).sum() / denom
+                value_coef = float(getattr(Config, "RL_VALUE_COEF", 0.5))
+                entropy_coef = float(getattr(Config, "RL_ENTROPY_COEF", 0.01))
+                rl_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
 
-                    if opt_policy is not None:
-                        opt_policy.zero_grad()
-                        (float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0)) * rl_loss).backward()
-                        torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=Config.GRAD_CLIP_NORM)
-                        opt_policy.step()
-                else:
-                    # ----- Full PPO: multi-epoch, minibatch updates on agent only -----
-                    # Stack PPO storage and pad to max steps
-                    if len(ppo_h) > 0:
-                        Hdim = ppo_h[0].shape[-1]
-                        ppo_h_exec = torch.stack(ppo_h, dim=0)           # (T,B,H)
-                        ppo_gaze_exec = torch.stack(ppo_gaze, dim=0)     # (T,B,2)
-                        ppo_mv_exec = torch.stack(ppo_move_idx, dim=0)   # (T,B)
-                        ppo_st_exec = torch.stack(ppo_stop, dim=0)       # (T,B)
-                        ppo_lp_exec = torch.stack(ppo_old_lp, dim=0)     # (T,B)
-                        ppo_v_exec = torch.stack(ppo_old_v, dim=0)       # (T,B)
-                    else:
-                        Hdim = values_t.shape[-1] if values_t.ndim > 2 else Config.HIDDEN_SIZE
-                        ppo_h_exec = torch.zeros((0, B, Hdim), device=Config.DEVICE)
-                        ppo_gaze_exec = torch.zeros((0, B, 2), device=Config.DEVICE)
-                        ppo_mv_exec = torch.zeros((0, B), device=Config.DEVICE, dtype=torch.long)
-                        ppo_st_exec = torch.zeros((0, B), device=Config.DEVICE)
-                        ppo_lp_exec = torch.zeros((0, B), device=Config.DEVICE)
-                        ppo_v_exec = torch.zeros((0, B), device=Config.DEVICE)
+            total_loss = total_loss + float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0)) * rl_loss
 
-                    def pad_to_max_gen(t_TB, pad_shape_last=None, dtype=None):
-                        if t_TB.size(0) == max_Steps:
-                            return t_TB
-                        pad_len = max_Steps - t_TB.size(0)
-                        if pad_shape_last is None:
-                            pad = torch.zeros((pad_len, *t_TB.shape[1:]), device=t_TB.device, dtype=t_TB.dtype)
-                        else:
-                            pad = torch.zeros((pad_len, *pad_shape_last), device=t_TB.device, dtype=dtype or t_TB.dtype)
-                        return torch.cat([t_TB, pad], dim=0)
+            # Backpropagation
+            if opt_policy is not None and rl_enabled:
+                opt_policy.zero_grad()
+            # Allow stepping backbone except when explicitly frozen
+            if not backbone_frozen:
+                opt_backbone.zero_grad()
+            total_loss.backward()
+            # Gradient clipping for stability (clip both backbone and agent)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=Config.GRAD_CLIP_NORM)
+            if opt_policy is not None and rl_enabled:
+                torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=Config.GRAD_CLIP_NORM)
 
-                    ppo_h_t = pad_to_max_gen(ppo_h_exec)
-                    ppo_gaze_t = pad_to_max_gen(ppo_gaze_exec)
-                    ppo_mv_t = pad_to_max_gen(ppo_mv_exec)
-                    ppo_st_t = pad_to_max_gen(ppo_st_exec)
-                    old_logprobs_t = pad_to_max_gen(ppo_lp_exec)
-                    old_values_t = pad_to_max_gen(ppo_v_exec)
-
-                    # Flatten valid time-steps using exec mask
-                    mask_flat = (exec_masks_t > 0.5).view(-1)
-                    h_flat = ppo_h_t.view(max_Steps * B, -1)[mask_flat]
-                    gaze_flat = ppo_gaze_t.view(max_Steps * B, 2)[mask_flat]
-                    mv_flat = ppo_mv_t.view(-1)[mask_flat]
-                    st_flat = ppo_st_t.view(-1)[mask_flat]
-                    old_lp_flat = old_logprobs_t.view(-1)[mask_flat]
-                    adv_flat = advantages.view(-1)[mask_flat].detach()
-                    ret_flat = returns.view(-1)[mask_flat].detach()
-                    old_v_flat = old_values_t.view(-1)[mask_flat].detach()
-                    n_samples = h_flat.size(0)
-                    if n_samples > 0:
-                        # Advantage normalization inside PPO (optional extra safety)
-                        if bool(getattr(Config, 'RL_NORM_ADV', False)):
-                            adv_mean = adv_flat.mean()
-                            adv_std = adv_flat.std(unbiased=False).clamp_min(1e-6)
-                            adv_flat = (adv_flat - adv_mean) / adv_std
-
-                        epochs = int(getattr(Config, 'PPO_EPOCHS', 4))
-                        mb_size = int(getattr(Config, 'PPO_MINIBATCH_SIZE', 1024))
-                        clip_eps = float(getattr(Config, 'PPO_CLIP_EPS', 0.2))
-                        vclip_eps = float(getattr(Config, 'PPO_VALUE_CLIP_EPS', 0.2))
-                        target_kl = float(getattr(Config, 'PPO_TARGET_KL', 0.0) or 0.0)
-                        rl_w = float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0))
-                        value_coef = float(getattr(Config, 'RL_VALUE_COEF', 0.5))
-                        entropy_coef = float(getattr(Config, 'RL_ENTROPY_COEF', 0.01))
-
-                        for ep in range(epochs):
-                            perm = torch.randperm(n_samples, device=Config.DEVICE)
-                            for start in range(0, n_samples, mb_size):
-                                idx = perm[start:start+mb_size]
-                                h_mb = h_flat[idx]
-                                gaze_mb = gaze_flat[idx]
-                                mv_mb = mv_flat[idx]
-                                st_mb = st_flat[idx]
-                                old_lp_mb = old_lp_flat[idx]
-                                adv_mb = adv_flat[idx]
-                                ret_mb = ret_flat[idx]
-                                old_v_mb = old_v_flat[idx]
-
-                                mv_logits_new, _dec_tmp, stop_logit_new, v_new = agent.full_policy(h_mb, gaze_mb)
-                                cat_new = Categorical(logits=mv_logits_new)
-                                mv_lp_new = cat_new.log_prob(mv_mb)
-                                ent_move = cat_new.entropy()
-                                stop_prob_new = torch.sigmoid(stop_logit_new)
-                                stop_dist_new = torch.distributions.Bernoulli(probs=stop_prob_new)
-                                st_lp_new = stop_dist_new.log_prob(st_mb)
-                                ent_stop = -(stop_prob_new * torch.log(stop_prob_new.clamp_min(1e-8)) + (1 - stop_prob_new) * torch.log((1 - stop_prob_new).clamp_min(1e-8)))
-                                new_lp_mb = mv_lp_new + st_lp_new
-
-                                ratio = torch.exp(new_lp_mb - old_lp_mb)
-                                surr1 = ratio * adv_mb
-                                surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv_mb
-                                policy_loss = -torch.mean(torch.min(surr1, surr2))
-
-                                # Value clipping
-                                v_pred = v_new
-                                v_clipped = old_v_mb + (v_pred - old_v_mb).clamp(-vclip_eps, vclip_eps)
-                                vf_loss1 = (v_pred - ret_mb) ** 2
-                                vf_loss2 = (v_clipped - ret_mb) ** 2
-                                value_loss = 0.5 * torch.mean(torch.max(vf_loss1, vf_loss2))
-
-                                entropy_loss = -torch.mean(ent_move + ent_stop)
-
-                                loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
-
-                                if opt_policy is not None:
-                                    opt_policy.zero_grad()
-                                    (rl_w * loss).backward()
-                                    torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=Config.GRAD_CLIP_NORM)
-                                    opt_policy.step()
-
-                            # Early stop by target KL
-                            if target_kl > 0.0:
-                                with torch.no_grad():
-                                    # Approximate KL on a random minibatch
-                                    idx = torch.randperm(n_samples, device=Config.DEVICE)[:min(n_samples, mb_size)]
-                                    h_mb = h_flat[idx]
-                                    gaze_mb = gaze_flat[idx]
-                                    mv_mb = mv_flat[idx]
-                                    st_mb = st_flat[idx]
-                                    old_lp_mb = old_lp_flat[idx]
-                                    mv_logits_new, _dec_tmp, stop_logit_new, _v_new = agent.full_policy(h_mb, gaze_mb)
-                                    cat_new = Categorical(logits=mv_logits_new)
-                                    mv_lp_new = cat_new.log_prob(mv_mb)
-                                    stop_prob_new = torch.sigmoid(stop_logit_new)
-                                    stop_dist_new = torch.distributions.Bernoulli(probs=stop_prob_new)
-                                    st_lp_new = stop_dist_new.log_prob(st_mb)
-                                    new_lp_mb = mv_lp_new + st_lp_new
-                                    approx_kl = torch.mean((old_lp_mb - new_lp_mb).clamp_min(0.0))
-                                if approx_kl.item() > target_kl:
-                                    break
+            # Step optimizers
+            if opt_policy is not None and rl_enabled:
+                opt_policy.step()
+            if not backbone_frozen:
+                opt_backbone.step()
 
             # Update counters and maybe checkpoint every 5000 images
             imgs_seen += images.size(0)
@@ -930,10 +856,7 @@ def train(
                 ckpt_path = os.path.join(run_dir, f"model_images_{imgs_seen}.pth")
                 # Save agent only when RL is not globally disabled (i.e., not --no-rl)
                 if not global_rl_disabled:
-                    torch.save({
-                        'model_state_dict': model.state_dict(),
-                        'agent_state_dict': agent.state_dict(),
-                    }, ckpt_path)
+                    torch.save({"model_state_dict": model.state_dict(), "agent_state_dict": agent.state_dict()}, ckpt_path)
                 else:
                     torch.save(model.state_dict(), ckpt_path)
                 print(f"Checkpoint saved at {imgs_seen} images -> {ckpt_path}")
@@ -944,14 +867,14 @@ def train(
             if wb is not None:
                 logs = {
                     "loss/rec_l1": float(rec_loss_unscaled.item()),
-                    "loss/total_nonrl": float(total_nonrl.item()),
+                    "loss/total_nonrl": float(total_loss.item()),
                     "episode/steps": int(Config.MAX_STEPS),
                 }
                 if final_perc is not None:
                     logs["loss/perc"] = float(final_perc.item())
                 if final_ssim is not None:
                     logs["loss/ssim"] = float(final_ssim.item())
-                if 'final_gdl' in locals() and final_gdl is not None:
+                if "final_gdl" in locals() and final_gdl is not None:
                     logs["loss/gdl_final"] = float(final_gdl.item())
                 # Log classification loss
                 if cls_enabled:
@@ -965,9 +888,13 @@ def train(
                 try:
                     H, W = Config.IMG_SIZE
                     # Prepare numpy images (convert from [-1,1] to [0,1] for display)
-                    orig_np = ((image[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
+                    orig_np = (
+                        (image[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0
+                    ).clip(0, 1)
                     # Use final_recon instead of intermediate reconstruction
-                    recon_np = ((final_recon[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
+                    recon_np = (
+                        (final_recon[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0
+                    ).clip(0, 1)
                     # Compute final decision for first sample and confidence
                     with torch.no_grad():
                         probs = torch.softmax(final_decision_logits, dim=1)
@@ -985,18 +912,27 @@ def train(
                             p0 = p if p.dim() == 1 else p[0]
                             pts.append((int(p0[0].item() * (W - 1)), int(p0[1].item() * (H - 1))))
                         xs, ys = zip(*pts)
-                        axs[0].scatter(xs, ys, c='r', s=40, marker='x', label='gaze')
-                        axs[0].plot(xs, ys, c='yellow', linewidth=1, alpha=0.8)
-                    axs[0].set_title('Original + gaze path')
-                    axs[0].axis('off')
+                        axs[0].scatter(xs, ys, c="r", s=40, marker="x", label="gaze")
+                        axs[0].plot(xs, ys, c="yellow", linewidth=1, alpha=0.8)
+                    axs[0].set_title("Original + gaze path")
+                    axs[0].axis("off")
                     # Right: Final step reconstruction
                     axs[1].imshow(recon_np)
-                    axs[1].set_title('Reconstruction (final step)')
+                    axs[1].set_title("Reconstruction (final step)")
                     # Overlay prediction vs truth text box
                     txt = f"pred={pred0}  p={conf0*100:.1f}%  true={true0}"
-                    axs[1].text(0.02, 0.98, txt, transform=axs[1].transAxes, va='top', ha='left',
-                                color='white', bbox=dict(facecolor='black', alpha=0.6, boxstyle='round,pad=0.3'), fontsize=9)
-                    axs[1].axis('off')
+                    axs[1].text(
+                        0.02,
+                        0.98,
+                        txt,
+                        transform=axs[1].transAxes,
+                        va="top",
+                        ha="left",
+                        color="white",
+                        bbox=dict(facecolor="black", alpha=0.6, boxstyle="round,pad=0.3"),
+                        fontsize=9,
+                    )
+                    axs[1].axis("off")
                     plt.tight_layout()
                     if wb is not None:
                         try:
@@ -1007,85 +943,100 @@ def train(
                     plt.close(fig)
                 except Exception:
                     pass
-                print(f"Epoch {epoch} Batch {batch_idx}: rec_loss={rec_loss_unscaled.item():.6f} total_nonrl={total_nonrl.item():.6f}")
+                print(
+                    f"Epoch {epoch} Batch {batch_idx}: rec_loss={rec_loss_unscaled.item():.6f} total_nonrl={total_loss.item():.6f}"
+                )
 
             global_step += 1
             episodes_seen += 1
             clear_memory()
-       
+
         model_path = os.path.join("gaze_control_model_local.pth")
         # Save agent only when RL is not globally disabled (i.e., not --no-rl)
         if not global_rl_disabled:
-            torch.save({
-                'model_state_dict': model.state_dict(),
-                'agent_state_dict': agent.state_dict(),
-            }, model_path)
+            torch.save({"model_state_dict": model.state_dict(), "agent_state_dict": agent.state_dict()}, model_path)
         else:
             torch.save(model.state_dict(), model_path)
         print(f"Epoch {epoch} complete. Model saved to {model_path}")
-    # No TensorBoard writer to close
 
 class SimpleImageDataset(Dataset):
     def __init__(self, data_dir, transform=None):
         self.transform = transform
         self.image_paths = []
-        
+
         # Get all image files recursively from the directory
-        image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tiff', '*.webp']
-        
+        image_extensions = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp"]
+
         for ext in image_extensions:
             # Search recursively with **/ pattern
-            pattern = os.path.join(data_dir, '**', ext)
+            pattern = os.path.join(data_dir, "**", ext)
             self.image_paths.extend(glob.glob(pattern, recursive=True))
             # Also search for uppercase extensions
-            pattern = os.path.join(data_dir, '**', ext.upper())
+            pattern = os.path.join(data_dir, "**", ext.upper())
             self.image_paths.extend(glob.glob(pattern, recursive=True))
-        
+
         # Remove duplicates and sort
         self.image_paths = sorted(list(set(self.image_paths)))
-        
+
         # Skip expensive verification; handle bad files at load time
         print(f"Found {len(self.image_paths)} images (unverified) in {data_dir}")
-    
+
     def __len__(self):
         return len(self.image_paths)
-    
+
     def __getitem__(self, idx):
         img_path = self.image_paths[idx]
         try:
-            image = Image.open(img_path).convert('RGB')
+            image = Image.open(img_path).convert("RGB")
             if self.transform:
                 image = self.transform(image)
             return image, 0  # Return dummy label since you don't need classes
         except Exception as e:
             print(f"Error loading image {img_path}: {e}")
             # Return a black image as fallback
-            black_img = Image.new('RGB', (224, 224), color='black')
+            black_img = Image.new("RGB", (224, 224), color="black")
             if self.transform:
                 black_img = self.transform(black_img)
             return black_img, 0
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train GazeControl model')
-    parser.add_argument('--config', default='config', help="config module name (e.g. 'config', 'configLarge', 'configXL')")
-    parser.add_argument('--use-pretrained', action='store_true', 
-                        help='Enable loading pretrained decoder weights (Config.PRETRAINED_DECODER_PATH)')
-    parser.add_argument('--load-full', action='store_true', 
-                        help='Load full model from Config.PRETRAINED_MODEL_PATH before training')
-    parser.add_argument('--no-rl', action='store_true', 
-                        help='Disable RL actor/critic; sample random actions from the discrete action space')
-    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
-    parser.add_argument('--wandb-project', type=str, default='GazeControl', help='W&B project name')
-    parser.add_argument('--wandb-entity', type=str, default=None, help='W&B entity/team')
-    parser.add_argument('--wandb-run-name', type=str, default=None, help='W&B run name')
-    parser.add_argument('--recon-warmup-epochs', type=int, default=0,
-                        help='Number of initial epochs with reconstruction-only (no RL); classification optionally disabled via --no-cls-warmup')
-    parser.add_argument('--no-cls-warmup', action='store_true',
-                        help='Disable classification loss during warmup epochs')
+    parser = argparse.ArgumentParser(description="Train GazeControl model")
+    parser.add_argument(
+        "--config", default="config", help="config module name (e.g. 'config', 'configLarge', 'configXL')"
+    )
+    parser.add_argument(
+        "--use-pretrained",
+        action="store_true",
+        help="Enable loading pretrained decoder weights (Config.PRETRAINED_DECODER_PATH)",
+    )
+    parser.add_argument(
+        "--load-full",
+        action="store_true",
+        help="Load full model from Config.PRETRAINED_MODEL_PATH before training",
+    )
+    parser.add_argument(
+        "--no-rl",
+        action="store_true",
+        help="Disable RL actor/critic; sample random actions from the discrete action space",
+    )
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
+    parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity/team")
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
+    parser.add_argument(
+        "--recon-warmup-epochs",
+        type=int,
+        default=0,
+        help="Number of initial epochs with reconstruction-only (no RL); classification optionally disabled via --no-cls-warmup",
+    )
+    parser.add_argument(
+        "--no-cls-warmup", action="store_true", help="Disable classification loss during warmup epochs"
+    )
     args = parser.parse_args()
 
     # Dynamically load config module and rebind Config used in this module
-    if getattr(args, 'config', None) and args.config != 'config':
+    if getattr(args, "config", None) and args.config != "config":
         try:
             mod = importlib.import_module(args.config)
             Config = mod.Config  # rebind global used above
@@ -1095,7 +1046,9 @@ if __name__ == "__main__":
 
     # Brief summary of key model dims for sanity
     try:
-        print(f"Config: IMG={Config.IMG_SIZE}, FOVEA={Config.FOVEA_OUTPUT_SIZE}, HIDDEN={Config.HIDDEN_SIZE}, POS_DIM={Config.POS_ENCODING_DIM}, LAYERS={Config.LSTM_LAYERS}, FUSION_TO_DIM={getattr(Config,'FUSION_TO_DIM',None)}, DEC_CH={Config.DECODER_LATENT_CH}, BATCH={Config.BATCH_SIZE}")
+        print(
+            f"Config: IMG={Config.IMG_SIZE}, FOVEA={Config.FOVEA_OUTPUT_SIZE}, HIDDEN={Config.HIDDEN_SIZE}, POS_DIM={Config.POS_ENCODING_DIM}, LAYERS={Config.LSTM_LAYERS}, FUSION_TO_DIM={getattr(Config,'FUSION_TO_DIM',None)}, DEC_CH={Config.DECODER_LATENT_CH}, BATCH={Config.BATCH_SIZE}"
+        )
     except Exception:
         pass
 
@@ -1111,9 +1064,9 @@ if __name__ == "__main__":
                 "lr": Config.LEARNING_RATE,
                 "device": Config.DEVICE,
                 "data_source": Config.DATA_SOURCE,
-                "k_scales": getattr(Config, 'K_SCALES', 3),
+                "k_scales": getattr(Config, "K_SCALES", 3),
                 "fovea": Config.FOVEA_OUTPUT_SIZE,
-            }
+            },
         )
 
     if args.no_rl:
@@ -1124,8 +1077,8 @@ if __name__ == "__main__":
             load_full_model=args.load_full,
             no_rl=args.no_rl,
             wb=wb_run,
-            recon_warmup_epochs=int(getattr(args, 'recon_warmup_epochs', 0) or 0),
-            no_cls_warmup=bool(getattr(args, 'no_cls_warmup', False)),
+            recon_warmup_epochs=int(getattr(args, "recon_warmup_epochs", 0) or 0),
+            no_cls_warmup=bool(getattr(args, "no_cls_warmup", False)),
         )
     finally:
         if wb_run is not None:

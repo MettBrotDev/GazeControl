@@ -95,7 +95,7 @@ class Config:
     RL_STEP_PENALTY = 0.0025 #maybe lower it to 0.005 for next training
 
     #PPO parameters
-    USE_PPO = True                
+    USE_PPO = False                
     PPO_EPOCHS = 4                # number of optimization epochs per batch
     PPO_MINIBATCH_SIZE = 1024     # minibatch size for PPO updates (flattened T*B)
     PPO_CLIP_EPS = 0.2            # policy clip epsilon
