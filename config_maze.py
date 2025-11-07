@@ -29,6 +29,8 @@ class Config:
     DECODER_LATENT_CH = 24
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
+    ENABLE_RECONSTRUCTION = False
+
     # Data: point at Maze dataset images
     MAZE_ROOT = "./Data/Maze10Random"
     LOCAL_DATA_DIR = [MAZE_ROOT]

@@ -188,6 +188,7 @@ def train(
     wb=None,
     recon_warmup_epochs: int = 0,
     no_cls_warmup: bool = False,
+    disable_recon: bool = False,
 ):
     # timestamped run directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -232,6 +233,9 @@ def train(
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, shuffle=False, num_workers=0)
 
     # Initialize model, loss and optimizer
+    # Determine reconstruction usage (CLI + config)
+    recon_enabled = (not disable_recon) and bool(getattr(Config, 'ENABLE_RECONSTRUCTION', True))
+
     model = GazeControlModel(
         encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
         state_size=Config.HIDDEN_SIZE,
@@ -245,7 +249,13 @@ def train(
         fusion_hidden_mul=getattr(Config, "FUSION_HIDDEN_MUL", 2.0),
         encoder_c1=getattr(Config, "ENCODER_C1", None),
         encoder_c2=getattr(Config, "ENCODER_C2", None),
+        use_decoder=recon_enabled,
     ).to(Config.DEVICE)
+
+    if not recon_enabled:
+        print("[INFO] Reconstruction disabled: decoder will be unused and its parameters frozen.")
+        for p in model.decoder.parameters():
+            p.requires_grad = False
 
     # Load a full pretrained model checkpoint (e.g., random-move baseline) if configured
     ckpt_path = getattr(Config, "PRETRAINED_MODEL_PATH", "")
@@ -278,7 +288,7 @@ def train(
             print(f"Warning: PRETRAINED_MODEL_PATH set but not found: {ckpt_path}")
 
     # Load pretrained decoder if available and requested
-    if use_pretrained_decoder and os.path.exists(Config.PRETRAINED_DECODER_PATH):
+    if recon_enabled and use_pretrained_decoder and os.path.exists(Config.PRETRAINED_DECODER_PATH):
         print(f"Loading pretrained decoder from {Config.PRETRAINED_DECODER_PATH}")
         decoder_state = torch.load(Config.PRETRAINED_DECODER_PATH, map_location=Config.DEVICE)
         # Try strict load; if channel mismatch (e.g., latent_ch changed), load best effort
@@ -294,10 +304,11 @@ def train(
             print(f"Freezing decoder for first {Config.FREEZE_DECODER_EPOCHS} epoch(s)")
             for param in model.decoder.parameters():
                 param.requires_grad = False
-    elif use_pretrained_decoder:
+    elif recon_enabled and use_pretrained_decoder:
         print(f"No pretrained decoder found at {Config.PRETRAINED_DECODER_PATH}, training from scratch")
     else:
-        print("Decoder pretrain disabled; continuing with current model weights")
+        if recon_enabled:
+            print("Decoder pretrain disabled; continuing with current model weights")
 
     # Build separate optimizers for policy/value heads and backbone
     agent = Agent(
@@ -337,7 +348,8 @@ def train(
     print(f"Encoder:    {encoder_params:>12,} params ({encoder_params/1e6:.2f}M)")
     print(f"Fusion MLP: {fusion_params:>12,} params ({fusion_params/1e6:.2f}M)")
     print(f"LSTM:       {lstm_params:>12,} params ({lstm_params/1e6:.2f}M)")
-    print(f"Decoder:    {decoder_params:>12,} params ({decoder_params/1e6:.2f}M) {'[FROZEN]' if decoder_trainable == 0 else ''}")
+    dec_note = "[DISABLED]" if not recon_enabled else ("[FROZEN]" if decoder_trainable == 0 else "")
+    print(f"Decoder:    {decoder_params:>12,} params ({decoder_params/1e6:.2f}M) {dec_note}")
     print(f"{'-' * 60}")
     print(f"Total Model:{total_model_params:>12,} params ({total_model_params/1e6:.2f}M)")
     print(f"Trainable:  {count_params(model, only_trainable=True):>12,} params ({count_params(model, only_trainable=True)/1e6:.2f}M)")
@@ -507,7 +519,7 @@ def train(
                 if alive_idx.numel() == 0:
                     break
 
-                if use_step_mask:
+                if recon_enabled and use_step_mask:
                     # Build current-step mask and merge into cumulative visibility
                     step_mask = _make_gaussian_mask(
                         H, W, gaze[alive_idx], sigma_frac=sigma_step, device=Config.DEVICE
@@ -530,12 +542,15 @@ def train(
                 weight = min_w + (max_w - min_w) * step_frac
 
                 # Compute L1 loss alive subset (masked-only when enabled)
-                l1_step = (
-                    l1_m if use_step_mask else l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight
-                )
+                if recon_enabled:
+                    l1_step = (
+                        l1_m if use_step_mask else l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight
+                    )
+                else:
+                    l1_step = torch.tensor(0.0, device=Config.DEVICE)
 
                 # Compute MS-SSIM loss for this step if enabled on alive subset
-                if use_ssim:
+                if recon_enabled and use_ssim:
                     mssim_step_val = ms_ssim(
                         reconstruction[alive_idx], image[alive_idx], data_range=2.0, size_average=True
                     )
@@ -544,7 +559,7 @@ def train(
                     ssim_step = 0.0
 
                 # Optional GDL per-step on alive subset
-                if criterion_gdl is not None:
+                if recon_enabled and criterion_gdl is not None:
                     gdl_step = criterion_gdl(reconstruction[alive_idx], image[alive_idx]) * weight
                 else:
                     gdl_step = 0.0
@@ -554,8 +569,8 @@ def train(
 
                 rec_error = (
                     l1_weight * l1_step
-                    + (ssim_weight * ssim_step if use_ssim else 0.0)
-                    + (gdl_weight * gdl_step if criterion_gdl is not None else 0.0)
+                    + (ssim_weight * ssim_step if (recon_enabled and use_ssim) else 0.0)
+                    + (gdl_weight * gdl_step if (recon_enabled and criterion_gdl is not None) else 0.0)
                 )
 
                 total_rec_loss = total_rec_loss + rec_error
@@ -633,7 +648,7 @@ def train(
             final_recon = model.decode_from_state(state)
 
             # Optional: restrict final reconstruction loss to what the agent actually observed
-            use_final_mask = bool(getattr(Config, "USE_FINAL_VISIBILITY_MASK", False)) and len(gaze_path) > 0
+            use_final_mask = recon_enabled and bool(getattr(Config, "USE_FINAL_VISIBILITY_MASK", False)) and len(gaze_path) > 0
             final_l1 = None
             masked_final_gdl = None
             if use_final_mask:
@@ -690,36 +705,39 @@ def train(
                     dy_loss = (dy_diff.flatten(1).sum(dim=1) / dy_sum).mean()
                     masked_final_gdl = dx_loss + dy_loss
             else:
-                final_l1 = l1_loss(final_recon, image)
+                final_l1 = l1_loss(final_recon, image) if recon_enabled else torch.tensor(0.0, device=Config.DEVICE)
 
             # Optional perceptual loss
             final_perc = None
-            if criterion_perc is not None:
+            if recon_enabled and criterion_perc is not None:
                 final_perc = criterion_perc(final_recon, image)
 
             # Optional MS-SSIM loss
             final_ssim = None
-            if use_ssim:
+            if recon_enabled and use_ssim:
                 # MS-SSIM expects inputs in [-1,1] range, set data_range=2.0
                 mssim_val = ms_ssim(final_recon, image, data_range=2.0, size_average=True)
                 final_ssim = 1.0 - mssim_val
 
             # Optional GDL on final reconstruction
             final_gdl = None
-            if criterion_gdl is not None:
+            if recon_enabled and criterion_gdl is not None:
                 if use_final_mask and masked_final_gdl is not None:
                     final_gdl = masked_final_gdl
                 else:
                     final_gdl = criterion_gdl(final_recon, image)
 
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
-            final_loss = l1_weight * final_l1 * final_mult
-            if final_perc is not None and perc_weight > 0.0:
-                final_loss = final_loss + perc_weight * final_perc * final_mult
-            if final_ssim is not None and ssim_weight > 0.0:
-                final_loss = final_loss + ssim_weight * final_ssim * final_mult
-            if final_gdl is not None and gdl_weight > 0.0:
-                final_loss = final_loss + gdl_weight * final_gdl * final_mult
+            if recon_enabled:
+                final_loss = l1_weight * final_l1 * final_mult
+                if final_perc is not None and perc_weight > 0.0:
+                    final_loss = final_loss + perc_weight * final_perc * final_mult
+                if final_ssim is not None and ssim_weight > 0.0:
+                    final_loss = final_loss + ssim_weight * final_ssim * final_mult
+                if final_gdl is not None and gdl_weight > 0.0:
+                    final_loss = final_loss + gdl_weight * final_gdl * final_mult
+            else:
+                final_loss = torch.tensor(0.0, device=Config.DEVICE)
 
             # Compute final decision logits for those never stopped
             T_exec = len(values)
@@ -848,18 +866,18 @@ def train(
                 next_save_at += 50000
 
             # log reconstruction loss via W&B
-            rec_loss_unscaled = l1_weight * final_l1
+            rec_loss_unscaled = l1_weight * final_l1 if recon_enabled else torch.tensor(0.0, device=Config.DEVICE)
             if wb is not None:
                 logs = {
                     "loss/rec_l1": float(rec_loss_unscaled.item()),
                     "loss/total_nonrl": float(total_loss.item()),
                     "episode/steps": int(Config.MAX_STEPS),
                 }
-                if final_perc is not None:
+                if recon_enabled and final_perc is not None:
                     logs["loss/perc"] = float(final_perc.item())
-                if final_ssim is not None:
+                if recon_enabled and final_ssim is not None:
                     logs["loss/ssim"] = float(final_ssim.item())
-                if "final_gdl" in locals() and final_gdl is not None:
+                if recon_enabled and "final_gdl" in locals() and final_gdl is not None:
                     logs["loss/gdl_final"] = float(final_gdl.item())
                 # Log classification loss
                 if cls_enabled:
@@ -869,7 +887,7 @@ def train(
                 wandb.log(logs, step=global_step)
 
             # Occasionally log a synchronized figure: Original+GazePath vs Reconstruction (every 10 batches)
-            if batch_idx % 10 == 0:
+            if recon_enabled and batch_idx % 10 == 0:
                 try:
                     H, W = Config.IMG_SIZE
                     # Prepare numpy images (convert from [-1,1] to [0,1] for display)
@@ -1005,6 +1023,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable RL actor/critic; sample random actions from the discrete action space",
     )
+    parser.add_argument(
+        "--no-recon",
+        action="store_true",
+        help="Disable reconstruction & decoder (classification/RL only)",
+    )
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity/team")
@@ -1064,6 +1087,7 @@ if __name__ == "__main__":
             wb=wb_run,
             recon_warmup_epochs=int(getattr(args, "recon_warmup_epochs", 0) or 0),
             no_cls_warmup=bool(getattr(args, "no_cls_warmup", False)),
+            disable_recon=bool(getattr(args, "no_recon", False)),
         )
     finally:
         if wb_run is not None:

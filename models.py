@@ -148,7 +148,7 @@ class GazeControlModel(nn.Module):
     - Memory: nn.LSTM over steps.
     - Output each step: reconstructed full image (B,3,H,W).
     """
-    def __init__(self, encoder_output_size, state_size=768, img_size=(32, 32), fovea_size=(24, 24), pos_encoding_dim: int = 32, lstm_layers: int = 2, decoder_latent_ch: int = 48, k_scales: int = 3, fuse_to_dim: int | None = None, fusion_hidden_mul: float = 2.0, encoder_c1: int | None = None, encoder_c2: int | None = None):
+    def __init__(self, encoder_output_size, state_size=768, img_size=(32, 32), fovea_size=(24, 24), pos_encoding_dim: int = 32, lstm_layers: int = 2, decoder_latent_ch: int = 48, k_scales: int = 3, fuse_to_dim: int | None = None, fusion_hidden_mul: float = 2.0, encoder_c1: int | None = None, encoder_c2: int | None = None, use_decoder: bool = True):
         super().__init__()
         # Allow scaling encoder channel widths via optional args
         enc_c1 = 24 if encoder_c1 is None else int(encoder_c1)
@@ -171,6 +171,8 @@ class GazeControlModel(nn.Module):
 
         # CNN decoder from hidden state to image (always tanh for [-1,1] images)
         self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch)
+        # Toggle to entirely skip decoder compute and losses
+        self.use_decoder = bool(use_decoder)
 
     def init_memory(self, batch_size, device):
         """Return zero (h0, c0) for LSTM of shape (num_layers, B, state_size)."""
@@ -181,7 +183,12 @@ class GazeControlModel(nn.Module):
     def decode_from_state(self, lstm_state):
         """Decode final reconstruction only from the current LSTM hidden state (top layer)."""
         h = lstm_state[0][-1]  # (B,H) from top layer
-        return self.decoder(h)
+        if self.use_decoder:
+            return self.decoder(h)
+        # Return a blank image tensor when decoder is disabled
+        B = h.size(0)
+        H, W = self.img_size
+        return torch.zeros(B, 3, H, W, device=h.device, dtype=h.dtype)
 
     def forward(self, patches, lstm_state, gaze):
         """
@@ -202,7 +209,12 @@ class GazeControlModel(nn.Module):
         step_in = fused.unsqueeze(1)                   # (B,1,input_dim)
         lstm_out, next_state = self.lstm(step_in, lstm_state)  # lstm_out: (B,1,H)
         h = lstm_out.squeeze(1)                    # (B,H)
-        reconstruction = self.decoder(h)
+        if self.use_decoder:
+            reconstruction = self.decoder(h)
+        else:
+            B = h.size(0)
+            H, W = self.img_size
+            reconstruction = torch.zeros(B, 3, H, W, device=h.device, dtype=h.dtype)
         return reconstruction, next_state
 
 
