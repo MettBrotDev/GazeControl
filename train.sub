@@ -1,12 +1,12 @@
 # Submit from the repository root: condor_submit train.sub
 BASE_DIR                = .
-CONFIG_MODULE           = config_maze256
+CONFIG_MODULE           = config_maze512
 
 WANDB_PROJECT           = GazeControl
 WANDB_ENTITY            = FlorentinDoll
 WANDB_MODE              = online
 WANDB_API_KEY           = 
-RUN_NAME                = train_maze256$(Cluster).$(Process)
+RUN_NAME                = train_maze512$(Cluster).$(Process)
 
 # Python interpreter to use (virtualenv recommended)
 PYTHON                  = .venv/bin/python
