@@ -1,12 +1,12 @@
 # Submit from the repository root: condor_submit train.sub
 BASE_DIR                = .
-CONFIG_MODULE           = configL
+CONFIG_MODULE           = config_maze128
 
 WANDB_PROJECT           = GazeControl
-WANDB_ENTITY            = GazeControl
+WANDB_ENTITY            = FlorentinDoll
 WANDB_MODE              = online
 WANDB_API_KEY           = 
-RUN_NAME                = train_$(Cluster).$(Process)
+RUN_NAME                = train_maze128$(Cluster).$(Process)
 
 # Python interpreter to use (virtualenv recommended)
 PYTHON                  = .venv/bin/python
@@ -14,7 +14,7 @@ PYTHON                  = .venv/bin/python
 # Training run knobs
 USE_PRETRAINED_FLAG     = --use-pretrained
 LOAD_FULL_FLAG          = 
-NO_RL_FLAG              = --no-rl
+NO_RL_FLAG              =
 EXTRA_ARGS              = 
 
 universe                = vanilla
@@ -25,7 +25,7 @@ log                     = condor_logs/train.$(Cluster).$(Process).log
 output                  = condor_logs/train.$(Cluster).$(Process).out.log
 error                   = condor_logs/train.$(Cluster).$(Process).err.log
 request_gpus            = 1
-request_cpus            = 2
+request_cpus            = 4
 request_memory          = 8 GB
 getenv                  = True
 stream_output           = True
