@@ -113,7 +113,11 @@ def eight_dir_deltas(max_move: float, device: str):
 
 
 class MazeDataset(Dataset):
-    """Maze dataset that reads images and labels from generated metadata JSON."""
+    """Maze dataset that reads images and labels from generated metadata JSON.
+
+    Mirrors train_maze.MazeDataset: returns (img, label, start_xy) where start_xy is
+    derived from metadata 'start' (grid coords) if present, or center fallback.
+    """
     def __init__(self, root_dir: str, split: str = 'train', transform=None):
         super().__init__()
         self.root = root_dir
@@ -122,24 +126,43 @@ class MazeDataset(Dataset):
         self.img_dir = os.path.join(root_dir, 'imgs', split)
         self.meta_path = os.path.join(root_dir, f'{split}_metadata.json')
         with open(self.meta_path, 'r') as f:
-            meta = json.load(f)
-        self.samples = [(m['filename'], int(m['label'])) for m in meta]
+            self.meta = json.load(f)
+        self.samples = self.meta
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        fname, label = self.samples[idx]
+        entry = self.samples[idx]
+        fname = entry['filename']
+        label = int(entry['label'])
         p = os.path.join(self.img_dir, fname)
-        img = Image.open(p).convert('RGB')
-        if self.transform:
-            img = self.transform(img)
-        return img, torch.tensor(label, dtype=torch.long)
+        img_pil = Image.open(p).convert('RGB')
+
+        # Estimate grid size from image size and block size (default 4) or Config.IMG_SIZE
+        # Follow train_maze: grid_size = Config.IMG_SIZE[0] // 4
+        self.grid_size = Config.IMG_SIZE[0] // 4
+
+        # Compute start gaze from metadata if available
+        start_xy = torch.tensor([0.5, 0.5], dtype=torch.float32)
+        if isinstance(entry.get('start'), dict):
+            try:
+                sx = int(entry['start'].get('x'))
+                sy = int(entry['start'].get('y'))
+                nx = (float(sx) + 0.5) / float(self.grid_size)
+                ny = (float(sy) + 0.5) / float(self.grid_size)
+                start_xy = torch.tensor([nx, ny], dtype=torch.float32)
+            except Exception:
+                pass
+
+        img = self.transform(img_pil) if self.transform else img_pil
+        return img, torch.tensor(label, dtype=torch.long), start_xy
 
 
 def validate(
     split: str = 'val',
     model_path: str | None = None,
+    data_root: str | None = None,
 ):
     # Setup transforms (match training range [-1,1])
     transform_img = transforms.Compose([
@@ -149,7 +172,7 @@ def validate(
     ])
 
     # Dataset/loader
-    maze_root = getattr(Config, 'MAZE_ROOT', os.path.join('./Data', 'Maze15'))
+    maze_root = data_root or getattr(Config, 'MAZE_ROOT', os.path.join('./Data', 'Maze'))
     if not os.path.exists(os.path.join(maze_root, 'imgs', split)):
         raise FileNotFoundError(f"Maze split '{split}' not found at {maze_root}. Set Config.MAZE_ROOT or generate it with Datasets/generate_maze.py")
     dataset = MazeDataset(maze_root, split=split, transform=transform_img)
@@ -205,12 +228,24 @@ def validate(
     correct = 0
     total = 0
     with torch.no_grad():
-        for images, labels in loader:
+        for batch in loader:
+            if isinstance(batch, (list, tuple)) and len(batch) >= 3:
+                images, labels, starts_xy = batch
+            else:
+                images, labels = batch
+                starts_xy = None
             image = images.to(Config.DEVICE)
             labels = labels.to(Config.DEVICE)
             B = image.size(0)
             # Init gaze
-            if hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
+            if starts_xy is not None:
+                base = starts_xy.to(Config.DEVICE)
+                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+                if jitter_r > 0.0:
+                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
+                    base = base + jitter
+                gaze = base.clamp(0.0, 1.0)
+            elif hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
                 base = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1)
                 jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
                 if jitter_r > 0.0:
@@ -245,7 +280,7 @@ def validate(
                 if alive_idx.numel() == 0:
                     break
 
-                # Greedy policy: choose argmax move and stop if prob>=0.5
+                # Greedy policy: choose argmax move; STOP gated by confidence like training
                 h_t = state[0][-1]
                 move_logits, decision_logits_step, stop_logit, _value_t = agent.full_policy(h_t, gaze)
                 action_idx = move_logits.argmax(dim=1)
@@ -255,6 +290,11 @@ def validate(
                 min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
                 if step < min(min_steps, int(getattr(Config, 'MAX_STEPS', 20))) - 1:
                     stop_sample = torch.zeros_like(stop_sample)
+                # Confidence gating
+                conf_thresh = float(getattr(Config, 'STOP_CONF_THRESH', 0.9))
+                if conf_thresh is not None and conf_thresh > 0.0:
+                    conf = torch.softmax(decision_logits_step, dim=1).amax(dim=1)
+                    stop_sample = torch.where(conf >= conf_thresh, stop_sample, torch.zeros_like(stop_sample))
 
                 # Record decisions for samples that stop now
                 newly_stopped = (stop_sample >= 0.5) & alive_mask
@@ -302,6 +342,8 @@ if __name__ == "__main__":
     parser.add_argument('--config', default='config', help="config module name (e.g. 'config', 'config_maze')")
     parser.add_argument('--model-path', type=str, default=None, help='Path to checkpoint (supports model+agent dict)')
     parser.add_argument('--split', type=str, default='val', help='Dataset split to validate on')
+    parser.add_argument('--data-root', '--maze-root', dest='data_root', type=str, default=None,
+                        help='Path to dataset root (overrides Config.MAZE_ROOT). Expect imgs/<split>/ and <split>_metadata.json inside.')
     args = parser.parse_args()
 
     # Dynamically load config module and rebind Config used in this module
@@ -317,6 +359,7 @@ if __name__ == "__main__":
         validate(
             split=str(getattr(args, 'split', 'val') or 'val'),
             model_path=args.model_path,
+            data_root=getattr(args, 'data_root', None),
         )
     finally:
         clear_memory()

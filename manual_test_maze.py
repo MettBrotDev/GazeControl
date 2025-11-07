@@ -7,12 +7,40 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog
 from torchvision import transforms
 from torch.distributions import Categorical
 
 from models import GazeControlModel, Agent
 from train_maze import crop_patch, eight_dir_deltas, MazeDataset
+
+
+class SimpleImageFolderDataset:
+	"""Plain image folder loader (no metadata). Returns (img, 0, start_xy=center).
+
+	- root_dir: directory containing images (png/jpg/jpeg)
+	- transform: torchvision transform applied to PIL image
+	"""
+	def __init__(self, root_dir: str, transform=None):
+		self.root = root_dir
+		self.transform = transform
+		exts = ('.png', '.jpg', '.jpeg')
+		self.files = [os.path.join(root_dir, f) for f in sorted(os.listdir(root_dir)) if f.lower().endswith(exts)]
+		if not self.files:
+			raise FileNotFoundError(f"No images found in folder: {root_dir}")
+
+	def __len__(self):
+		return len(self.files)
+
+	def __getitem__(self, idx):
+		from PIL import Image
+		p = self.files[idx]
+		img = Image.open(p).convert('RGB')
+		if self.transform:
+			img = self.transform(img)
+		# label=0 placeholder; start at center
+		start_xy = torch.tensor([0.5, 0.5], dtype=torch.float32)
+		return img, torch.tensor(0, dtype=torch.long), start_xy
 
 
 def to_display(x):
@@ -54,7 +82,7 @@ def composite_fovea(raw_patches, resized_patches):
 
 
 class MazeManualTestGUI:
-	def __init__(self, root, config_module: str, checkpoint: str, split: str = 'val', idx: int | None = None, deterministic: bool = False):
+	def __init__(self, root, config_module: str, checkpoint: str, split: str = 'val', idx: int | None = None, deterministic: bool = False, root_dir: str | None = None, images_dir: str | None = None):
 		self.root = root
 		self.root.title("Manual Maze Gaze Test")
 		self.cfg = importlib.import_module(config_module).Config
@@ -63,18 +91,29 @@ class MazeManualTestGUI:
 		self.det = deterministic
 
 		# Dataset (match training transforms to [-1,1])
-		root_guess = getattr(self.cfg, 'MAZE_ROOT', os.path.join('./Data', 'Maze'))
-		if not os.path.exists(root_guess):
-			# fallback to common default in repo
-			alt = os.path.join('./Data', 'Maze')
-			if os.path.exists(alt):
-				root_guess = alt
-		self.ds = MazeDataset(root_guess, split=split,
-							  transform=transforms.Compose([
-								  transforms.Resize(self.cfg.IMG_SIZE),
-								  transforms.ToTensor(),
-								  transforms.Lambda(lambda x: x * 2.0 - 1.0),
-							  ]))
+		self.transform = transforms.Compose([
+			transforms.Resize(self.cfg.IMG_SIZE),
+			transforms.ToTensor(),
+			transforms.Lambda(lambda x: x * 2.0 - 1.0),
+		])
+
+		self.mode = tk.StringVar(value='maze')  # 'maze' uses metadata dataset, 'folder' uses plain images
+		self.root_dir = None
+		self.images_dir = None
+
+		def default_maze_root():
+			r = getattr(self.cfg, 'MAZE_ROOT', os.path.join('./Data', 'Maze'))
+			if not os.path.exists(r):
+				alt = os.path.join('./Data', 'Maze')
+				if os.path.exists(alt):
+					r = alt
+			return r
+
+		# Initialize dataset according to provided paths
+		if images_dir:
+			self.set_dataset_folder(images_dir)
+		else:
+			self.set_dataset_maze(root_dir or default_maze_root(), split)
 		self.idx = idx if idx is not None else random.randrange(len(self.ds))
 
 		# Model and agent (instantiate like training)
@@ -109,6 +148,10 @@ class MazeManualTestGUI:
 		self.last_probs = None
 		self.last_rec = None
 		self.last_patches = None
+		# Baseline CNN prediction state
+		self.baseline_model_var = tk.StringVar(value='MazeCNNClassifier')
+		self.baseline_chkpt_var = tk.StringVar(value='')
+		self.baseline_result = None
 
 		# GUI layout
 		self._build_gui()
@@ -124,11 +167,74 @@ class MazeManualTestGUI:
 		# Controls
 		control = ttk.Frame(main_frame)
 		control.pack(fill=tk.X, pady=(0, 10))
-		ttk.Button(control, text="Next step", command=self.on_next).pack(side=tk.LEFT, padx=(0, 6))
+		self.btn_next = ttk.Button(control, text="Next step", command=self.on_next)
+		self.btn_next.pack(side=tk.LEFT, padx=(0, 6))
+		self.btn_run100 = ttk.Button(control, text="Run 100 steps", command=lambda: self.start_auto_run(100))
+		self.btn_run100.pack(side=tk.LEFT, padx=(0, 6))
+		self.btn_stop = ttk.Button(control, text="Stop", command=self.stop_auto_run, state='disabled')
+		self.btn_stop.pack(side=tk.LEFT, padx=(0, 6))
 		ttk.Button(control, text="Reset on image", command=self.on_reset).pack(side=tk.LEFT, padx=(0, 6))
-		ttk.Button(control, text=f"Next {self.split} image", command=self.on_next_image).pack(side=tk.LEFT, padx=(0, 6))
+		self.btn_next_img = ttk.Button(control, text=f"Next {self.split} image", command=self.on_next_image)
+		self.btn_next_img.pack(side=tk.LEFT, padx=(0, 6))
 		self.status = ttk.Label(control, text="Click the original image to set gaze; Next step follows policy")
 		self.status.pack(side=tk.LEFT, padx=(10, 0))
+
+		# Dataset controls row
+		dsbar = ttk.Frame(main_frame)
+		dsbar.pack(fill=tk.X, pady=(0, 8))
+		ttk.Label(dsbar, text="Mode:").pack(side=tk.LEFT)
+		ttk.Label(dsbar, textvariable=self.mode).pack(side=tk.LEFT, padx=(2, 12))
+
+		ttk.Label(dsbar, text="Split:").pack(side=tk.LEFT)
+		self.split_var = tk.StringVar(value=self.split)
+		split_cb = ttk.Combobox(dsbar, textvariable=self.split_var, values=['train','val','test','custom'], width=8, state='readonly')
+		split_cb.pack(side=tk.LEFT)
+		ttk.Button(dsbar, text="Set split", command=self.on_set_split).pack(side=tk.LEFT, padx=(4, 12))
+
+		ttk.Button(dsbar, text="Browse dataset root…", command=self.on_browse_root).pack(side=tk.LEFT, padx=(0, 6))
+		ttk.Button(dsbar, text="Open images folder…", command=self.on_browse_folder).pack(side=tk.LEFT)
+
+		# Baseline classifier controls row
+		basebar = ttk.Frame(main_frame)
+		basebar.pack(fill=tk.X, pady=(0, 8))
+		ttk.Label(basebar, text="Baseline model:").pack(side=tk.LEFT)
+		# Discover classifier classes dynamically
+		try:
+			import models as models_mod
+			import torch.nn as nn
+			model_names = []
+			for k, v in models_mod.__dict__.items():
+				if isinstance(v, type) and issubclass(v, nn.Module) and 'Classifier' in k:
+					model_names.append(k)
+			model_names = sorted(set(model_names)) or ['MazeCNNClassifier']
+		except Exception:
+			model_names = ['MazeCNNClassifier']
+		cmb_model = ttk.Combobox(basebar, values=model_names, textvariable=self.baseline_model_var, state='readonly', width=28)
+		cmb_model.pack(side=tk.LEFT, padx=(4, 8))
+		ttk.Button(basebar, text="Select checkpoint…", command=self.on_select_baseline_checkpoint).pack(side=tk.LEFT, padx=(0, 8))
+		ttk.Button(basebar, text="Predict baseline", command=self.on_predict_baseline).pack(side=tk.LEFT)
+		self.baseline_status = ttk.Label(basebar, text="")
+		self.baseline_status.pack(side=tk.LEFT, padx=(10,0))
+
+		# Manual move controls (8-direction arrows)
+		mvframe = ttk.LabelFrame(main_frame, text="Manual move")
+		mvframe.pack(fill=tk.X, pady=(0, 8))
+		# Direction indices must match eight_dir_deltas in train_maze.py: [E=0, NE=1, N=2, NW=3, W=4, SW=5, S=6, SE=7]
+		# Map UI arrows to deltas with image coordinates (y down).
+		# eight_dir_deltas is defined with N=(0,+1) and S=(0,-1), so vertical is inverted vs screen.
+		# We remap so that ↑ moves visually up (negative y): ↑ -> idx 6 (S), ↓ -> idx 2 (N).
+		btn_map = [
+			((0,0), ('↖', 5)), ((0,1), ('↑', 6)), ((0,2), ('↗', 7)),
+			((1,0), ('←', 4)),                     ((1,2), ('→', 0)),
+			((2,0), ('↙', 3)), ((2,1), ('↓', 2)), ((2,2), ('↘', 1)),
+		]
+		grid = [[None]*3 for _ in range(3)]
+		for (r,c), (txt, idx) in btn_map:
+			b = ttk.Button(mvframe, text=txt, width=3, command=lambda k=idx: self.on_manual_move(k))
+			b.grid(row=r, column=c, padx=2, pady=2)
+		# Add an empty disabled center to keep layout neat
+		center = ttk.Label(mvframe, text='·')
+		center.grid(row=1, column=1)
 
 		# Matplotlib figure embedded in Tk
 		self.fig, self.axs = plt.subplots(2, 2, figsize=(12, 10))
@@ -136,6 +242,42 @@ class MazeManualTestGUI:
 		self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
 		self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 		self.canvas.mpl_connect('button_press_event', self._on_click)
+
+	def on_select_baseline_checkpoint(self):
+		p = filedialog.askopenfilename(title="Select baseline checkpoint", filetypes=[('PyTorch checkpoint','*.pth *.pt'), ('All files','*.*')])
+		if p:
+			self.baseline_chkpt_var.set(p)
+			self.baseline_status.config(text=f"ckpt: {os.path.basename(p)}")
+
+	def on_predict_baseline(self):
+		# Prepare current image in [0,1] for baseline
+		if self.image is None:
+			return
+		if not self.baseline_chkpt_var.get():
+			self.baseline_status.config(text="Select a checkpoint first")
+			return
+		try:
+			import importlib, torch
+			import models as models_mod
+			ModelCls = getattr(models_mod, self.baseline_model_var.get(), None)
+			if ModelCls is None:
+				raise RuntimeError(f"Unknown model class {self.baseline_model_var.get()}")
+			# x in [-1,1] -> [0,1]
+			x01 = ((self.image.detach().to(self.device).clamp(-1,1) + 1.0) * 0.5)
+			model = ModelCls().to(self.device).eval()
+			state = torch.load(self.baseline_chkpt_var.get(), map_location=self.device)
+			if isinstance(state, dict) and 'model_state_dict' in state:
+				state = state['model_state_dict']
+			model.load_state_dict(state, strict=False)
+			with torch.no_grad():
+				logits = model(x01).squeeze()
+				prob = torch.sigmoid(logits).item()
+				logit = float(logits.item())
+				pred = int(prob >= 0.5)
+			self.baseline_result = f"Baseline: prob={prob:.3f} pred={pred} logit={logit:.3f}"
+			self.baseline_status.config(text=self.baseline_result)
+		except Exception as e:
+			self.baseline_status.config(text=f"Error: {e}")
 
 	def _load_checkpoint(self, path: str):
 		if os.path.exists(path):
@@ -289,10 +431,58 @@ class MazeManualTestGUI:
 				f"Stop prob: {stp:.3f}\nValue: {val:.3f}\n"
 				f"Step: {self.step}  Stopped: {self.stopped}  Label: {self.label}"
 			)
+		# Append baseline prediction if available
+		if self.baseline_result:
+			txt += f"\n\n{self.baseline_result}"
 		self.axs[1, 1].text(0.02, 0.98, txt, va='top', ha='left', fontsize=10)
 		self.axs[1, 1].set_title('Current probabilities and info')
 
 		self.canvas.draw()
+
+	# Manual movement: user chooses one of 8 directions instead of policy
+	def on_manual_move(self, dir_idx: int):
+		if self.image is None:
+			return
+		# Compute model outputs at current gaze (for visualization) but override movement choice
+		base_h, base_w = self.cfg.FOVEA_CROP_SIZE
+		k = int(getattr(self.cfg, 'K_SCALES', 3))
+		patches_resized = []
+		raw_patches = []
+		for i in range(k):
+			sc = 2 ** i
+			size = (base_h * sc, base_w * sc)
+			raw_patches.append(crop_patch(self.image, self.gaze, size, resize_to=None)[0])
+			patches_resized.append(crop_patch(self.image, self.gaze, size, resize_to=self.cfg.FOVEA_OUTPUT_SIZE))
+		with torch.no_grad():
+			rec, self.state = self.model(patches_resized, self.state, self.gaze)
+			h_t = self.state[0][-1]
+			move_logits, decision_logits, stop_logit, value_t = self.agent.full_policy(h_t, self.gaze)
+		# Update displays
+		move_probs = torch.softmax(move_logits, dim=1)
+		decision_probs = torch.softmax(decision_logits, dim=1)
+		stop_prob = torch.sigmoid(stop_logit)
+		self.last_probs = {
+			'move_probs': move_probs.detach().cpu().flatten().tolist(),
+			'decision_probs': decision_probs.detach().cpu().flatten().tolist(),
+			'stop_prob': float(stop_prob.detach().cpu().item()),
+			'value': float(value_t.detach().cpu().item()),
+		}
+		self.last_rec = rec.detach().clone()
+		self.last_patches = [p.cpu() for p in reversed(raw_patches)]
+		self.last_patches_resized = [p.cpu()[0] for p in reversed(patches_resized)]
+
+		# Append current gaze, ignore policy STOP and apply chosen move
+		self.path.append(self.gaze.detach().clone())
+		deltas = eight_dir_deltas(self.cfg.MAX_MOVE, device=self.device)
+		delta = deltas[dir_idx]
+		self.gaze = torch.clamp(self.gaze + delta, 0.0, 1.0)
+		if getattr(self.cfg, 'USE_GAZE_BOUNDS', False):
+			frac = float(getattr(self.cfg, 'GAZE_BOUND_FRACTION', 0.1))
+			lo, hi = frac, 1.0 - frac
+			self.gaze = self.gaze.clamp(min=lo, max=hi)
+		self.step += 1
+		# Do not change self.stopped here; user can keep moving manually
+		self._draw()
 
 	# Button/click callbacks
 	def on_next(self):
@@ -301,7 +491,108 @@ class MazeManualTestGUI:
 			self._policy_step()
 		self._draw()
 
+	# ---- Auto-run controls ----
+	def start_auto_run(self, n: int = 100):
+		if getattr(self, 'auto_running', False):
+			return
+		self.auto_running = True
+		self.auto_remaining = int(max(0, n))
+		self.auto_job = None
+		# UI states
+		self.btn_run100.config(state='disabled')
+		self.btn_stop.config(state='normal')
+		self.btn_next.config(state='disabled')
+		self.btn_next_img.config(state='disabled')
+		self._auto_tick()
+
+	def stop_auto_run(self):
+		if getattr(self, 'auto_job', None) is not None:
+			try:
+				self.root.after_cancel(self.auto_job)
+			except Exception:
+				pass
+			self.auto_job = None
+		self.auto_running = False
+		self.auto_remaining = 0
+		# UI states
+		self.btn_run100.config(state='normal')
+		self.btn_stop.config(state='disabled')
+		self.btn_next.config(state='normal')
+		self.btn_next_img.config(state='normal')
+
+	def _auto_tick(self):
+		# stop conditions
+		if not getattr(self, 'auto_running', False):
+			return
+		if self.auto_remaining <= 0 or self.stopped:
+			self.stop_auto_run()
+			return
+		# do one step
+		self.on_next()
+		self.auto_remaining -= 1
+		# schedule next
+		if self.auto_remaining > 0 and not self.stopped and self.auto_running:
+			self.auto_job = self.root.after(1, self._auto_tick)
+		else:
+			self.stop_auto_run()
+
+	# Dataset switching
+	def set_dataset_maze(self, root_dir: str, split: str):
+		self.mode.set('maze')
+		self.root_dir = root_dir
+		self.images_dir = None
+		self.split = split
+		self.ds = MazeDataset(root_dir, split=split, transform=self.transform)
+
+	def set_dataset_folder(self, folder: str):
+		self.mode.set('folder')
+		self.images_dir = folder
+		self.root_dir = None
+		self.ds = SimpleImageFolderDataset(folder, transform=self.transform)
+		self.split = 'folder'
+        
+	def on_set_split(self):
+		if self.mode.get() != 'maze':
+			return
+		new_split = self.split_var.get()
+		try:
+			self.set_dataset_maze(self.root_dir, new_split)
+			self.idx = 0
+			self.btn_next_img.config(text=f"Next {self.split} image")
+			self._load_sample(self.idx)
+			self._draw()
+		except Exception as e:
+			self.status.config(text=f"Failed to set split: {e}")
+
+	def on_browse_root(self):
+		d = filedialog.askdirectory(title="Select dataset root (contains imgs/<split> and <split>_metadata.json)")
+		if not d:
+			return
+		try:
+			self.set_dataset_maze(d, self.split_var.get())
+			self.idx = 0
+			self.btn_next_img.config(text=f"Next {self.split} image")
+			self._load_sample(self.idx)
+			self._draw()
+		except Exception as e:
+			self.status.config(text=f"Invalid dataset root: {e}")
+
+	def on_browse_folder(self):
+		d = filedialog.askdirectory(title="Select images folder (png/jpg)")
+		if not d:
+			return
+		try:
+			self.set_dataset_folder(d)
+			self.idx = 0
+			self.btn_next_img.config(text=f"Next folder image")
+			self._load_sample(self.idx)
+			self._draw()
+		except Exception as e:
+			self.status.config(text=f"Invalid images folder: {e}")
+
 	def on_reset(self):
+		# Cancel auto-run if active
+		self.stop_auto_run()
 		# Reset network on current image
 		self.gaze = self.start_xy.view(1, 2).clone()
 		self.state = self.model.init_memory(1, self.device)
@@ -314,6 +605,8 @@ class MazeManualTestGUI:
 		self._draw()
 
 	def on_next_image(self):
+		# Cancel auto-run if active
+		self.stop_auto_run()
 		self.idx = (self.idx + 1) % len(self.ds)
 		self._load_sample(self.idx)
 		self._draw()
@@ -346,13 +639,24 @@ def main():
 	ap = argparse.ArgumentParser(description='Interactive Maze model demo')
 	ap.add_argument('--config_module', default='config_maze')
 	ap.add_argument('--checkpoint', default='gaze_control_model_local.pth')
-	ap.add_argument('--split', choices=['train','val','test'], default='val')
+	ap.add_argument('--split', choices=['train','val','test','custom','folder'], default='val')
+	ap.add_argument('--root-dir', type=str, default=None, help='Maze dataset root (contains imgs/<split> and <split>_metadata.json)')
+	ap.add_argument('--images-dir', type=str, default=None, help='Plain images folder (png/jpg). Overrides --root-dir if set')
 	ap.add_argument('--index', type=int, default=None)
 	ap.add_argument('--deterministic', action='store_true')
 	args = ap.parse_args()
 
 	root = tk.Tk()
-	app = MazeManualTestGUI(root, args.config_module, args.checkpoint, split=args.split, idx=args.index, deterministic=args.deterministic)
+	app = MazeManualTestGUI(
+		root,
+		args.config_module,
+		args.checkpoint,
+		split=args.split,
+		idx=args.index,
+		deterministic=args.deterministic,
+		root_dir=args.root_dir,
+		images_dir=args.images_dir,
+	)
 	root.mainloop()
 
 
