@@ -1,0 +1,41 @@
+# Submit from repo root: condor_submit generate_maze10_random.sub
+# Generates 10x10 random-endpoint maze dataset (balanced by generator logic) with specified path length constraint.
+
+BASE_DIR                = .
+PYTHON                  = .venv/bin/python
+SCRIPT                  = Datasets/generate_maze.py
+
+# Dataset parameters (from user command)
+TRAIN_SAMPLES           = 300000
+VAL_SAMPLES             = 3000
+TEST_SAMPLES            = 3000
+GRID_SIZE               = 10
+BLOCK_SIZE              = 4
+MIN_PATH_LENGTH         = 3
+OUTPUT_DIR              = Data/Maze10Random
+SEED                    = 42
+
+# Random endpoints enabled
+RANDOM_ENDPOINTS_FLAG   = --random-endpoints
+
+universe                = vanilla
+executable              = $(PYTHON)
+initialdir              = $(BASE_DIR)
+arguments               = -u $(SCRIPT) --train-samples $(TRAIN_SAMPLES) --val-samples $(VAL_SAMPLES) --test-samples $(TEST_SAMPLES) --grid-size $(GRID_SIZE) --block-size $(BLOCK_SIZE) --output-dir ./$(OUTPUT_DIR) $(RANDOM_ENDPOINTS_FLAG) --min-path-length $(MIN_PATH_LENGTH) --seed $(SEED)
+log                     = condor_logs/maze10random.$(Cluster).$(Process).log
+output                  = condor_logs/maze10random.$(Cluster).$(Process).out.log
+error                   = condor_logs/maze10random.$(Cluster).$(Process).err.log
+request_cpus            = 4
+request_memory          = 8 GB
+request_disk            = 4 GB
+getenv                  = True
+stream_output           = True
+stream_error            = True
+
+# Optional: route temporary files and pip cache to scratch/data (uncomment and set paths)
+TMPDIR                  = 
+PIP_CACHE_DIR           = 
+environment             = "TMPDIR=$(TMPDIR); PIP_CACHE_DIR=$(PIP_CACHE_DIR)"
+
+# Single job (generation is sequential)
+queue 1
