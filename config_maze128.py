@@ -12,7 +12,7 @@ class Config:
     GRAD_CLIP_NORM = 1.0
     BATCH_SIZE = 128
 
-    # Model dims (lightweight)
+    # Model dims 
     HIDDEN_SIZE = 128
     ENCODER_C1 = 16
     ENCODER_C2 = 24

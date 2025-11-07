@@ -13,7 +13,7 @@ class Config:
     BATCH_SIZE = 128
 
     # Model dims 
-    HIDDEN_SIZE = 128
+    HIDDEN_SIZE = 512
     ENCODER_C1 = 16
     ENCODER_C2 = 24
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # 2x2 pooled features
