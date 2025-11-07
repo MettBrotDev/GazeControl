@@ -472,13 +472,6 @@ def train(
             logprobs = []  # list of (B,)
             values = []  # list of (B,)
             entropies = []  # list of (B,)
-            # For PPO: store per-step state/action to recompute new log probs
-            ppo_h = []  # list of (B,H)
-            ppo_gaze = []  # list of (B,2)
-            ppo_move_idx = []  # list of (B,)
-            ppo_stop = []  # list of (B,)
-            ppo_old_lp = []  # list of (B,)
-            ppo_old_v = []  # list of (B,)
             # record gaze positions per step (pre-action)
             gaze_path = []
             # Early stopping per-sample
@@ -605,14 +598,6 @@ def train(
                     logprobs.append(logprob)
                     values.append(value_t)
                     entropies.append(entropy)
-                    # PPO storage
-                    if bool(getattr(Config, "USE_PPO", False)):
-                        ppo_h.append(h_t.detach())
-                        ppo_gaze.append(gaze.detach())
-                        ppo_move_idx.append(move_idx.detach())
-                        ppo_stop.append(stop_sample.detach())
-                        ppo_old_lp.append(logprob.detach())
-                        ppo_old_v.append(value_t.detach())
                     # final decision logits update for samples that stopped this step
                     newly_stopped = (stop_sample >= 0.5) & alive_mask
                     if newly_stopped.any():
