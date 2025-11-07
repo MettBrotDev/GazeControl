@@ -54,6 +54,31 @@ class MazeGenerator:
             j += 1
         return edges[i], edges[j]
 
+    def _shortest_path_len(self, maze, start, end):
+        """Return shortest path length (#steps) between start and end or None if disconnected."""
+        from collections import deque
+        sx, sy = start
+        tx, ty = end
+        if maze[sy, sx] == 0 or maze[ty, tx] == 0:
+            return None
+        N = self.grid_size
+        visited = np.zeros_like(maze, dtype=bool)
+        dist = np.full_like(maze, fill_value=-1, dtype=int)
+        q = deque([(sx, sy)])
+        visited[sy, sx] = True
+        dist[sy, sx] = 0
+        while q:
+            x, y = q.popleft()
+            if x == tx and y == ty:
+                return int(dist[y, x])
+            for dx, dy in [(0, -1), (1, 0), (0, 1), (-1, 0)]:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < N and 0 <= ny < N and not visited[ny, nx] and maze[ny, nx] == 1:
+                    visited[ny, nx] = True
+                    dist[ny, nx] = dist[y, x] + 1
+                    q.append((nx, ny))
+        return None
+
     def generate_maze(self, force_disconnected=False, start=None, end=None):
         """
         Generate a random maze with proper walls and paths.
@@ -262,7 +287,8 @@ class MazeGenerator:
                 maze[ty, tx] = 1
 
         connected = self._is_connected(maze, start, end)
-        return maze, connected, start, end
+        path_len = self._shortest_path_len(maze, start, end) if connected else None
+        return maze, connected, start, end, path_len
     
     def _is_connected(self, maze, start, end):
         """Check if given start connects to end using BFS."""
@@ -359,7 +385,7 @@ class MazeGenerator:
             img[ty0:ty0 + self.block_size, tx0:tx0 + self.block_size] = [255, 0, 0]
         return img
     
-    def generate_dataset(self, num_samples, balance=True):
+    def generate_dataset(self, num_samples, balance=True, min_path_len: int = 0):
         """
         Generate a dataset of maze images.
         
@@ -379,6 +405,7 @@ class MazeGenerator:
         mazes = []
         starts = []
         ends = []
+        path_lengths = []
         
         if balance:
             # Generate equal numbers of connected and disconnected
@@ -390,17 +417,26 @@ class MazeGenerator:
             # Generate connected mazes
             pbar = tqdm(total=num_connected, desc="Connected mazes")
             count = 0
-            while count < num_connected:
-                maze, connected, start, end = self.generate_maze(force_disconnected=False)
-                if connected:
-                    img = self.maze_to_image(maze, start, end)
-                    images.append(img)
-                    labels.append(1)
-                    mazes.append(maze)
-                    starts.append(start)
-                    ends.append(end)
-                    count += 1
-                    pbar.update(1)
+            max_attempts = num_connected * 5000 if min_path_len > 0 else num_connected * 10
+            attempts_total = 0
+            while count < num_connected and attempts_total < max_attempts:
+                maze, connected, start, end, plen = self.generate_maze(force_disconnected=False)
+                attempts_total += 1
+                if not connected:
+                    continue  # need connected here
+                if min_path_len > 0 and (plen is None or plen < min_path_len):
+                    continue
+                img = self.maze_to_image(maze, start, end)
+                images.append(img)
+                labels.append(1)
+                mazes.append(maze)
+                starts.append(start)
+                ends.append(end)
+                path_lengths.append(plen if plen is not None else -1)
+                count += 1
+                pbar.update(1)
+            if count < num_connected and min_path_len > 0:
+                print(f"[warn] Could only generate {count}/{num_connected} connected mazes with path_len >= {min_path_len} after {attempts_total} attempts.")
             pbar.close()
             
             # Generate disconnected mazes
@@ -410,33 +446,31 @@ class MazeGenerator:
             while count < num_disconnected:
                 attempts = 0
                 disconnected_found = False
-                
                 while attempts < max_attempts_per_maze and not disconnected_found:
-                    maze, connected, start, end = self.generate_maze(force_disconnected=True)
-                    if not connected:
-                        img = self.maze_to_image(maze, start, end)
-                        images.append(img)
-                        labels.append(0)
-                        mazes.append(maze)
-                        starts.append(start)
-                        ends.append(end)
-                        count += 1
-                        disconnected_found = True
-                        pbar.update(1)
+                    maze, connected, start, end, plen = self.generate_maze(force_disconnected=True)
                     attempts += 1
-                
-                # If still can't generate disconnected after max attempts, force it harder
+                    if connected:
+                        # If maze accidentally connected, only accept if meets length constraint but we need disconnected here
+                        continue
+                    img = self.maze_to_image(maze, start, end)
+                    images.append(img)
+                    labels.append(0)
+                    mazes.append(maze)
+                    starts.append(start)
+                    ends.append(end)
+                    path_lengths.append(-1)
+                    count += 1
+                    disconnected_found = True
+                    pbar.update(1)
                 if not disconnected_found:
-                    # Create maze and add a complete barrier
-                    maze, _, start, end = self.generate_maze(force_disconnected=False)
-                    # Add complete barrier
+                    # Force disconnect by barrier
+                    maze, _, start, end, _ = self.generate_maze(force_disconnected=False)
                     barrier = self.grid_size // 2
-                    maze[barrier, :] = 0  # Horizontal wall across
+                    maze[barrier, :] = 0
                     sx, sy = start
                     tx, ty = end
                     maze[sy, sx] = 1
                     maze[ty, tx] = 1
-                    
                     if not self._is_connected(maze, start, end):
                         img = self.maze_to_image(maze, start, end)
                         images.append(img)
@@ -444,29 +478,37 @@ class MazeGenerator:
                         mazes.append(maze)
                         starts.append(start)
                         ends.append(end)
+                        path_lengths.append(-1)
                         count += 1
                         pbar.update(1)
             pbar.close()
         else:
-            # Generate random mazes (mix of connected and disconnected)
-            for _ in tqdm(range(num_samples), desc="Generating mazes"):
-                # 50/50 chance of trying for connected vs disconnected
-                if np.random.rand() < 0.5:
-                    maze, connected, start, end = self.generate_maze(force_disconnected=False)
-                else:
-                    maze, connected, start, end = self.generate_maze(force_disconnected=True)
-                
+            # Generate random mazes (mix) honoring min_path_len for connected ones
+            pbar = tqdm(total=num_samples, desc="Generating mazes")
+            attempts_total = 0
+            while len(images) < num_samples:
+                want_connected = np.random.rand() < 0.5
+                maze, connected, start, end, plen = self.generate_maze(force_disconnected=not want_connected)
+                attempts_total += 1
+                if connected and min_path_len > 0 and (plen is None or plen < min_path_len):
+                    continue
                 img = self.maze_to_image(maze, start, end)
                 images.append(img)
                 labels.append(1 if connected else 0)
                 mazes.append(maze)
                 starts.append(start)
                 ends.append(end)
-        
-        return images, labels, mazes, starts, ends
+                path_lengths.append(plen if plen is not None else -1)
+                pbar.update(1)
+                if attempts_total > num_samples * 2000 and min_path_len > 0:
+                    print(f"[warn] High rejection rate when enforcing min_path_len={min_path_len}; proceeding with current set ({len(images)}).")
+                    break
+            pbar.close()
+
+        return images, labels, mazes, starts, ends, path_lengths
 
 
-def save_dataset(images, labels, output_dir, split='train', starts=None, ends=None):
+def save_dataset(images, labels, output_dir, split='train', starts=None, ends=None, path_lengths=None):
     """Save images and labels to disk."""
     img_dir = os.path.join(output_dir, 'imgs', split)
     os.makedirs(img_dir, exist_ok=True)
@@ -490,6 +532,8 @@ def save_dataset(images, labels, output_dir, split='train', starts=None, ends=No
             tx, ty = ends[idx]
             entry['start'] = {'x': int(sx), 'y': int(sy)}
             entry['end'] = {'x': int(tx), 'y': int(ty)}
+        if path_lengths is not None:
+            entry['path_length'] = int(path_lengths[idx]) if path_lengths[idx] is not None else -1
         metadata.append(entry)
     
     # Save metadata JSON
@@ -527,6 +571,8 @@ def main():
                        help='Random seed for reproducibility')
     parser.add_argument('--random-endpoints', action='store_true',
                        help='Randomize start/end positions on edges for each maze')
+    parser.add_argument('--min-path-length', type=int, default=0,
+                       help='Require connected mazes to have shortest path length >= this (others must be disconnected).')
     
     args = parser.parse_args()
     
@@ -545,27 +591,30 @@ def main():
     
     # Generate datasets
     print("Generating training set...")
-    train_images, train_labels, _, train_starts, train_ends = generator.generate_dataset(
-        args.train_samples, 
-        balance=not args.no_balance
+    train_images, train_labels, _, train_starts, train_ends, train_plens = generator.generate_dataset(
+        args.train_samples,
+        balance=not args.no_balance,
+        min_path_len=args.min_path_length,
     )
-    save_dataset(train_images, train_labels, args.output_dir, split='train', starts=train_starts, ends=train_ends)
+    save_dataset(train_images, train_labels, args.output_dir, split='train', starts=train_starts, ends=train_ends, path_lengths=train_plens)
     print()
     
     print("Generating validation set...")
-    val_images, val_labels, _, val_starts, val_ends = generator.generate_dataset(
+    val_images, val_labels, _, val_starts, val_ends, val_plens = generator.generate_dataset(
         args.val_samples,
-        balance=not args.no_balance
+        balance=not args.no_balance,
+        min_path_len=args.min_path_length,
     )
-    save_dataset(val_images, val_labels, args.output_dir, split='val', starts=val_starts, ends=val_ends)
+    save_dataset(val_images, val_labels, args.output_dir, split='val', starts=val_starts, ends=val_ends, path_lengths=val_plens)
     print()
     
     print("Generating test set...")
-    test_images, test_labels, _, test_starts, test_ends = generator.generate_dataset(
+    test_images, test_labels, _, test_starts, test_ends, test_plens = generator.generate_dataset(
         args.test_samples,
-        balance=not args.no_balance
+        balance=not args.no_balance,
+        min_path_len=args.min_path_length,
     )
-    save_dataset(test_images, test_labels, args.output_dir, split='test', starts=test_starts, ends=test_ends)
+    save_dataset(test_images, test_labels, args.output_dir, split='test', starts=test_starts, ends=test_ends, path_lengths=test_plens)
     print()
     
     # Save example visualizations

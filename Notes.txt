@@ -29,9 +29,9 @@ I feel like the glimpse parameters might be too low right now (6x6 isnt that muc
 
 
 
-Use PPO
-
-Punish stopping early when uncertain!!
+Different weights
+Different lstm sizes
+Different path lengths
 
 
 ssh login.cluster.is.localnet
