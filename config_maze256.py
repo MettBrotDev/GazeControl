@@ -65,7 +65,7 @@ class Config:
     PRETRAIN_LR = 3e-3
     PRETRAIN_BATCH_SIZE = 128
     FREEZE_DECODER_EPOCHS = 1
-    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_maze.pth"
+    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_maze256.pth"
     PRETRAIN_L1_WEIGHT = 1.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
@@ -74,7 +74,7 @@ class Config:
 
     PRETRAINED_MODEL_PATH = ""  # not used
     # Warm-start for RL: set this to your recon-only checkpoint (e.g., gaze_control_model_local.pth)
-    PRETRAINED_MODEL_PATH = "gaze_control_model_local.pth"
+    PRETRAINED_MODEL_PATH = "gaze_control_model_local256.pth"
 
     # Use local Maze dir in training scripts
     DATA_SOURCE = "local"
