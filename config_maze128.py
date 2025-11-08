@@ -30,7 +30,7 @@ class Config:
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     # Data: point at Maze dataset images
-    MAZE_ROOT = "./Data/Maze10Random"
+    MAZE_ROOT = "./Data/Maze10RandomEasy"
     LOCAL_DATA_DIR = [MAZE_ROOT]
     MNIST_DATA_DIR = "./Data/mnist"
     CIFAR100_DATA_DIR = "./Data/cifar100"
