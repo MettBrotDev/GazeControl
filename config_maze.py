@@ -1,6 +1,6 @@
 class Config:
     # 24x24 images: 6x6 blocks of 4x4 pixels
-    IMG_SIZE = (60, 60)
+    IMG_SIZE = (40, 40)
     # Keep fovea/crop tiny for speed; single-scale is fine here
     FOVEA_OUTPUT_SIZE = (4, 4)      # encoder input size per scale
     FOVEA_CROP_SIZE = (4, 4)    # base crop; multi-scale uses 4,8, 16
@@ -13,7 +13,7 @@ class Config:
     BATCH_SIZE = 128
 
     # Model dims (lightweight)
-    HIDDEN_SIZE = 512
+    HIDDEN_SIZE = 256
     ENCODER_C1 = 12
     ENCODER_C2 = 16
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # 2x2 pooled features
@@ -30,7 +30,7 @@ class Config:
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     # Data: point at Maze dataset images
-    MAZE_ROOT = "./Data/Maze15"
+    MAZE_ROOT = "./Data/Maze10Random"
     LOCAL_DATA_DIR = [MAZE_ROOT]
     MNIST_DATA_DIR = "./Data/mnist"
     CIFAR100_DATA_DIR = "./Data/cifar100"
@@ -38,7 +38,7 @@ class Config:
     # Rollout
     MAX_STEPS = 45
     MAX_MOVE = 0.1  # max gaze move per step (one tile)
-    MIN_STEPS_BEFORE_STOP = 1
+    MIN_STEPS_BEFORE_STOP = 15
     USE_GAZE_BOUNDS = False  # allow exploration to image borders for maze start at top-left
     GAZE_BOUND_FRACTION = 0.05
 

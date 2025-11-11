@@ -133,19 +133,45 @@ class MazeDataset(Dataset):
         self.img_dir = os.path.join(root_dir, 'imgs', split)
         self.meta_path = os.path.join(root_dir, f'{split}_metadata.json')
         with open(self.meta_path, 'r') as f:
-            meta = json.load(f)
-        self.samples = [(m['filename'], int(m['label'])) for m in meta]
+            self.meta = json.load(f)
+        # Keep full entries so we can access start/end if present
+        self.samples = self.meta
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        fname, label = self.samples[idx]
+        entry = self.samples[idx]
+        fname = entry['filename']
+        label = int(entry['label'])
         p = os.path.join(self.img_dir, fname)
-        img = Image.open(p).convert('RGB')
-        if self.transform:
-            img = self.transform(img)
-        return img, torch.tensor(label, dtype=torch.long)
+        
+        # Load image
+        img_pil = Image.open(p).convert('RGB')
+
+        # Just take gridsize like this for now
+        self.grid_size = Config.IMG_SIZE[0] // 4
+
+        # Compute start gaze from metadata grid coordinate
+        sx = sy = None
+        if isinstance(entry.get('start'), dict):
+            try:
+                sx = int(entry['start'].get('x'))
+                sy = int(entry['start'].get('y'))
+            except Exception:
+                sx = sy = None
+        if sx is not None and sy is not None:
+            nx = (float(sx) + 0.5) / float(self.grid_size)
+            ny = (float(sy) + 0.5) / float(self.grid_size)
+            start_xy = torch.tensor([nx, ny], dtype=torch.float32)
+        else:
+            # Fallback: center if metadata is missing
+            start_xy = torch.tensor([0.5, 0.5], dtype=torch.float32)
+
+        # Apply transforms to image
+        img = self.transform(img_pil) if self.transform else img_pil
+
+        return img, torch.tensor(label, dtype=torch.long), start_xy
 
 
 def train(
@@ -375,7 +401,13 @@ def train(
             for param in model.decoder.parameters():
                 param.requires_grad = True
                 
-        for batch_idx, (images, labels) in enumerate(train_loader):
+        for batch_idx, batch in enumerate(train_loader):
+            # Support datasets that return (image, label, start_xy)
+            if isinstance(batch, (list, tuple)) and len(batch) >= 3:
+                images, labels, starts_xy = batch
+            else:
+                images, labels = batch
+                starts_xy = None
             total_rec_loss = torch.tensor(0.0, device=Config.DEVICE)
             image = images.to(Config.DEVICE)
             labels = labels.to(Config.DEVICE)
@@ -383,7 +415,14 @@ def train(
             # Start gaze position
             num_steps = Config.MAX_STEPS
             B = image.size(0)
-            if hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
+            if starts_xy is not None:
+                base = starts_xy.to(Config.DEVICE)
+                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+                if jitter_r > 0.0:
+                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
+                    base = base + jitter
+                gaze = base.clamp(0.0, 1.0)
+            elif hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
                 base = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1)
                 jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
                 if jitter_r > 0.0:
