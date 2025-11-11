@@ -148,7 +148,7 @@ class GazeControlModel(nn.Module):
     - Memory: nn.LSTM over steps.
     - Output each step: reconstructed full image (B,3,H,W).
     """
-    def __init__(self, encoder_output_size, state_size=768, img_size=(32, 32), fovea_size=(24, 24), pos_encoding_dim: int = 32, lstm_layers: int = 2, decoder_latent_ch: int = 48, k_scales: int = 3, fuse_to_dim: int | None = None, fusion_hidden_mul: float = 2.0, encoder_c1: int | None = None, encoder_c2: int | None = None):
+    def __init__(self, encoder_output_size, state_size=768, img_size=(32, 32), fovea_size=(24, 24), pos_encoding_dim: int = 32, lstm_layers: int = 2, decoder_latent_ch: int = 48, k_scales: int = 3, fuse_to_dim: int | None = None, fusion_hidden_mul: float = 2.0, encoder_c1: int | None = None, encoder_c2: int | None = None, use_decoder: bool = True):
         super().__init__()
         # Allow scaling encoder channel widths via optional args
         enc_c1 = 24 if encoder_c1 is None else int(encoder_c1)
@@ -169,8 +169,13 @@ class GazeControlModel(nn.Module):
         self.lstm = nn.LSTM(input_size=self.input_dim, hidden_size=state_size, num_layers=lstm_layers, batch_first=True)
         self.lstm_layers = lstm_layers
 
-        # CNN decoder from hidden state to image (always tanh for [-1,1] images)
-        self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch)
+        # Optionally create a CNN decoder from hidden state to image (always tanh for [-1,1] images)
+        # If use_decoder is False, keep decoder as None and higher-level code should skip reconstruction losses.
+        self.use_decoder = bool(use_decoder)
+        if self.use_decoder:
+            self.decoder = DecoderCNN(state_size=state_size, out_size=img_size, latent_ch=decoder_latent_ch)
+        else:
+            self.decoder = None
 
     def init_memory(self, batch_size, device):
         """Return zero (h0, c0) for LSTM of shape (num_layers, B, state_size)."""
@@ -180,6 +185,9 @@ class GazeControlModel(nn.Module):
 
     def decode_from_state(self, lstm_state):
         """Decode final reconstruction only from the current LSTM hidden state (top layer)."""
+        # If decoder is disabled, return None so callers can skip reconstruction losses/logging
+        if not getattr(self, 'use_decoder', True) or self.decoder is None:
+            return None
         h = lstm_state[0][-1]  # (B,H) from top layer
         return self.decoder(h)
 
@@ -202,6 +210,9 @@ class GazeControlModel(nn.Module):
         step_in = fused.unsqueeze(1)                   # (B,1,input_dim)
         lstm_out, next_state = self.lstm(step_in, lstm_state)  # lstm_out: (B,1,H)
         h = lstm_out.squeeze(1)                    # (B,H)
+        # If decoder disabled, return None as reconstruction to indicate no decoding
+        if not getattr(self, 'use_decoder', True) or self.decoder is None:
+            return None, next_state
         reconstruction = self.decoder(h)
         return reconstruction, next_state
 

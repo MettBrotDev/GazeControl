@@ -219,6 +219,7 @@ def train(
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, shuffle=False, num_workers=0)
 
     # Initialize model, loss and optimizer
+    # Allow disabling the decoder via Config.USE_DECODER (useful when you don't want reconstruction losses)
     model = GazeControlModel(encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
                              state_size=Config.HIDDEN_SIZE,
                              img_size=Config.IMG_SIZE,
@@ -230,7 +231,8 @@ def train(
                              fuse_to_dim=getattr(Config, 'FUSION_TO_DIM', None),
                              fusion_hidden_mul=getattr(Config, 'FUSION_HIDDEN_MUL', 2.0),
                              encoder_c1=getattr(Config, 'ENCODER_C1', None),
-                             encoder_c2=getattr(Config, 'ENCODER_C2', None)).to(Config.DEVICE)
+                             encoder_c2=getattr(Config, 'ENCODER_C2', None),
+                             use_decoder=getattr(Config, 'USE_DECODER', True)).to(Config.DEVICE)
 
     # Load a full pretrained model checkpoint (e.g., random-move baseline) if configured
     ckpt_path = getattr(Config, 'PRETRAINED_MODEL_PATH', "")
@@ -256,8 +258,8 @@ def train(
         else:
             print(f"Warning: PRETRAINED_MODEL_PATH set but not found: {ckpt_path}")
 
-    # Load pretrained decoder if available and requested
-    if use_pretrained_decoder and os.path.exists(Config.PRETRAINED_DECODER_PATH):
+    # Load pretrained decoder if available and requested and decoder is enabled on the model
+    if use_pretrained_decoder and getattr(model, 'use_decoder', True) and model.decoder is not None and os.path.exists(Config.PRETRAINED_DECODER_PATH):
         print(f"Loading pretrained decoder from {Config.PRETRAINED_DECODER_PATH}")
         decoder_state = torch.load(Config.PRETRAINED_DECODER_PATH, map_location=Config.DEVICE)
         # Try strict load; if channel mismatch (e.g., latent_ch changed), load best effort
@@ -273,6 +275,8 @@ def train(
             print(f"Freezing decoder for first {Config.FREEZE_DECODER_EPOCHS} epoch(s)")
             for param in model.decoder.parameters():
                 param.requires_grad = False
+    elif use_pretrained_decoder and (not getattr(model, 'use_decoder', True) or model.decoder is None):
+        print("Model decoder is disabled; skipping pretrained decoder load")
     elif use_pretrained_decoder:
         print(f"No pretrained decoder found at {Config.PRETRAINED_DECODER_PATH}, training from scratch")
     else:
@@ -304,8 +308,12 @@ def train(
     encoder_params = count_params(model.encoder)
     fusion_params = count_params(model.fusion)
     lstm_params = count_params(model.lstm)
-    decoder_params = count_params(model.decoder)
-    decoder_trainable = count_params(model.decoder, only_trainable=True)
+    if getattr(model, 'use_decoder', True) and getattr(model, 'decoder', None) is not None:
+        decoder_params = count_params(model.decoder)
+        decoder_trainable = count_params(model.decoder, only_trainable=True)
+    else:
+        decoder_params = 0
+        decoder_trainable = 0
     total_model_params = count_params(model)
     agent_params = count_params(agent)
     
@@ -397,9 +405,10 @@ def train(
         if (hasattr(Config, 'FREEZE_DECODER_EPOCHS') and 
             Config.FREEZE_DECODER_EPOCHS > 0 and 
             epoch == Config.FREEZE_DECODER_EPOCHS):
-            print(f"Unfreezing decoder at epoch {epoch}")
-            for param in model.decoder.parameters():
-                param.requires_grad = True
+            if getattr(model, 'use_decoder', True) and getattr(model, 'decoder', None) is not None:
+                print(f"Unfreezing decoder at epoch {epoch}")
+                for param in model.decoder.parameters():
+                    param.requires_grad = True
                 
         for batch_idx, batch in enumerate(train_loader):
             # Support datasets that return (image, label, start_xy)
@@ -480,14 +489,18 @@ def train(
                     break
 
                 if use_step_mask:
-                    # Build current-step mask and merge into cumulative visibility
-                    step_mask = _make_gaussian_mask(H, W, gaze[alive_idx], sigma_frac=sigma_step, device=Config.DEVICE)  # (Ba,1,H,W)
-                    sum_mask[alive_idx] = torch.maximum(sum_mask[alive_idx], step_mask)
-                    # Compute masked per-sample L1 over union mask
-                    mask3 = sum_mask[alive_idx].expand(-1, 3, H, W)
-                    per_sample_l1 = (((reconstruction[alive_idx] - image[alive_idx]).abs() * mask3).flatten(1).sum(dim=1) /
-                                     (mask3.flatten(1).sum(dim=1) + 1e-6))
-                    l1_m = per_sample_l1.mean()
+                    # If decoder disabled, skip masked per-step loss computations
+                    if reconstruction is None:
+                        l1_m = 0
+                    else:
+                        # Build current-step mask and merge into cumulative visibility
+                        step_mask = _make_gaussian_mask(H, W, gaze[alive_idx], sigma_frac=sigma_step, device=Config.DEVICE)  # (Ba,1,H,W)
+                        sum_mask[alive_idx] = torch.maximum(sum_mask[alive_idx], step_mask)
+                        # Compute masked per-sample L1 over union mask
+                        mask3 = sum_mask[alive_idx].expand(-1, 3, H, W)
+                        per_sample_l1 = (((reconstruction[alive_idx] - image[alive_idx]).abs() * mask3).flatten(1).sum(dim=1) /
+                                         (mask3.flatten(1).sum(dim=1) + 1e-6))
+                        l1_m = per_sample_l1.mean()
                 else:
                     l1_m = 0
                 
@@ -498,18 +511,27 @@ def train(
                 weight = min_w + (max_w - min_w) * step_frac
 
                 # Compute L1 loss alive subset (masked-only when enabled)
-                l1_step = (l1_m if use_step_mask else l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight)
+                if reconstruction is None:
+                    l1_step = torch.tensor(0.0, device=Config.DEVICE)
+                else:
+                    l1_step = (l1_m if use_step_mask else l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight)
 
                 # Compute MS-SSIM loss for this step if enabled on alive subset
                 if use_ssim:
-                    mssim_step_val = ms_ssim(reconstruction[alive_idx], image[alive_idx], data_range=2.0, size_average=True)
-                    ssim_step = (1.0 - mssim_step_val) * weight
+                    if reconstruction is None:
+                        ssim_step = 0.0
+                    else:
+                        mssim_step_val = ms_ssim(reconstruction[alive_idx], image[alive_idx], data_range=2.0, size_average=True)
+                        ssim_step = (1.0 - mssim_step_val) * weight
                 else:
                     ssim_step = 0.0
 
                 # Optional GDL per-step on alive subset
                 if criterion_gdl is not None:
-                    gdl_step = criterion_gdl(reconstruction[alive_idx], image[alive_idx]) * weight
+                    if reconstruction is None:
+                        gdl_step = 0.0
+                    else:
+                        gdl_step = criterion_gdl(reconstruction[alive_idx], image[alive_idx]) * weight
                 else:
                     gdl_step = 0.0
 
@@ -580,80 +602,88 @@ def train(
 
             # Final reconstruction from final LSTM state with larger weight
             final_recon = model.decode_from_state(state)
-            
-            # Optional: restrict final reconstruction loss to what the agent actually observed
-            use_final_mask = bool(getattr(Config, "USE_FINAL_VISIBILITY_MASK", False)) and len(gaze_path) > 0
-            final_l1 = None
-            masked_final_gdl = None
-            if use_final_mask:
-                H, W = Config.IMG_SIZE
-                # Base sigma as fraction of image based on fovea size
-                sigma_base = Config.FOVEA_OUTPUT_SIZE[0] ** float(getattr(Config, "K_SCALES", 3)) / max(H, W)
-                sigma_frac_final = sigma_base * float(getattr(Config, "FINAL_MASK_SIGMA_SCALE", getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35)))
-                # Build per-step masks and union across actually executed steps per sample
-                T_obs = len(gaze_path)
-                masks_t = []
-                for t in range(T_obs):
-                    masks_t.append(_make_gaussian_mask(H, W, gaze_path[t], sigma_frac=sigma_frac_final, device=Config.DEVICE))  # (B,1,H,W)
-                masks_stack = torch.stack(masks_t, dim=0)  # (T,B,1,H,W)
 
-                # Determine executed steps per-sample; include all steps if never stopped
-                ls = last_step.clone()
-                ls[ls < 0] = T_obs - 1
-                t_idx = torch.arange(T_obs, device=Config.DEVICE).unsqueeze(1)  # (T,1)
-                exec_masks_tb = (t_idx <= ls.unsqueeze(0)).to(masks_stack.dtype)  # (T,B)
-                exec_masks_tb = exec_masks_tb.view(T_obs, -1, 1, 1, 1)
-                masks_stack = masks_stack * exec_masks_tb
-                # Union over time
-                final_mask = torch.amax(masks_stack, dim=0)  # (B,1,H,W)
-                # Expand to channels
-                final_mask3 = final_mask.expand(-1, 3, H, W)
-
-                # Masked per-sample L1 averaged over visible area only
-                per_sample_l1 = (((final_recon - image).abs() * final_mask3).flatten(1).sum(dim=1) /
-                                   (final_mask3.flatten(1).sum(dim=1) + 1e-6))
-                final_l1 = per_sample_l1.mean()
-
-                # If using GDL, use manual gdl inside mask
-                if criterion_gdl is not None:
-                    # Horizontal gradients: width-1
-                    pred_dx = torch.abs(final_recon[:, :, :, 1:] - final_recon[:, :, :, :-1])
-                    targ_dx = torch.abs(image[:, :, :, 1:] - image[:, :, :, :-1])
-                    mask_dx = final_mask3[:, :, :, 1:] * final_mask3[:, :, :, :-1]
-                    dx_diff = torch.abs(pred_dx - targ_dx) * mask_dx
-                    dx_sum = mask_dx.flatten(1).sum(dim=1).clamp_min(1.0)  # avoid div by zero
-                    dx_loss = (dx_diff.flatten(1).sum(dim=1) / dx_sum).mean()
-
-                    # Vertical gradients: height-1
-                    pred_dy = torch.abs(final_recon[:, :, 1:, :] - final_recon[:, :, :-1, :])
-                    targ_dy = torch.abs(image[:, :, 1:, :] - image[:, :, :-1, :])
-                    mask_dy = final_mask3[:, :, 1:, :] * final_mask3[:, :, :-1, :]
-                    dy_diff = torch.abs(pred_dy - targ_dy) * mask_dy
-                    dy_sum = mask_dy.flatten(1).sum(dim=1).clamp_min(1.0)
-                    dy_loss = (dy_diff.flatten(1).sum(dim=1) / dy_sum).mean()
-                    masked_final_gdl = dx_loss + dy_loss
+            # If decoder disabled, skip all reconstruction-based losses
+            if final_recon is None:
+                final_l1 = torch.tensor(0.0, device=Config.DEVICE)
+                masked_final_gdl = None
+                final_perc = None
+                final_ssim = None
+                final_gdl = None
             else:
-                final_l1 = l1_loss(final_recon, image)
-            
-            # Optional perceptual loss
-            final_perc = None
-            if criterion_perc is not None:
-                final_perc = criterion_perc(final_recon, image)
-            
-            # Optional MS-SSIM loss
-            final_ssim = None
-            if use_ssim:
-                # MS-SSIM expects inputs in [-1,1] range, set data_range=2.0
-                mssim_val = ms_ssim(final_recon, image, data_range=2.0, size_average=True)
-                final_ssim = 1.0 - mssim_val
+                # Optional: restrict final reconstruction loss to what the agent actually observed
+                use_final_mask = bool(getattr(Config, "USE_FINAL_VISIBILITY_MASK", False)) and len(gaze_path) > 0
+                final_l1 = None
+                masked_final_gdl = None
+                if use_final_mask:
+                    H, W = Config.IMG_SIZE
+                    # Base sigma as fraction of image based on fovea size
+                    sigma_base = Config.FOVEA_OUTPUT_SIZE[0] ** float(getattr(Config, "K_SCALES", 3)) / max(H, W)
+                    sigma_frac_final = sigma_base * float(getattr(Config, "FINAL_MASK_SIGMA_SCALE", getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35)))
+                    # Build per-step masks and union across actually executed steps per sample
+                    T_obs = len(gaze_path)
+                    masks_t = []
+                    for t in range(T_obs):
+                        masks_t.append(_make_gaussian_mask(H, W, gaze_path[t], sigma_frac=sigma_frac_final, device=Config.DEVICE))  # (B,1,H,W)
+                    masks_stack = torch.stack(masks_t, dim=0)  # (T,B,1,H,W)
 
-            # Optional GDL on final reconstruction
-            final_gdl = None
-            if criterion_gdl is not None:
-                if use_final_mask and masked_final_gdl is not None:
-                    final_gdl = masked_final_gdl
+                    # Determine executed steps per-sample; include all steps if never stopped
+                    ls = last_step.clone()
+                    ls[ls < 0] = T_obs - 1
+                    t_idx = torch.arange(T_obs, device=Config.DEVICE).unsqueeze(1)  # (T,1)
+                    exec_masks_tb = (t_idx <= ls.unsqueeze(0)).to(masks_stack.dtype)  # (T,B)
+                    exec_masks_tb = exec_masks_tb.view(T_obs, -1, 1, 1, 1)
+                    masks_stack = masks_stack * exec_masks_tb
+                    # Union over time
+                    final_mask = torch.amax(masks_stack, dim=0)  # (B,1,H,W)
+                    # Expand to channels
+                    final_mask3 = final_mask.expand(-1, 3, H, W)
+
+                    # Masked per-sample L1 averaged over visible area only
+                    per_sample_l1 = (((final_recon - image).abs() * final_mask3).flatten(1).sum(dim=1) /
+                                       (final_mask3.flatten(1).sum(dim=1) + 1e-6))
+                    final_l1 = per_sample_l1.mean()
+
+                    # If using GDL, use manual gdl inside mask
+                    if criterion_gdl is not None:
+                        # Horizontal gradients: width-1
+                        pred_dx = torch.abs(final_recon[:, :, :, 1:] - final_recon[:, :, :, :-1])
+                        targ_dx = torch.abs(image[:, :, :, 1:] - image[:, :, :, :-1])
+                        mask_dx = final_mask3[:, :, :, 1:] * final_mask3[:, :, :, :-1]
+                        dx_diff = torch.abs(pred_dx - targ_dx) * mask_dx
+                        dx_sum = mask_dx.flatten(1).sum(dim=1).clamp_min(1.0)  # avoid div by zero
+                        dx_loss = (dx_diff.flatten(1).sum(dim=1) / dx_sum).mean()
+
+                        # Vertical gradients: height-1
+                        pred_dy = torch.abs(final_recon[:, :, 1:, :] - final_recon[:, :, :-1, :])
+                        targ_dy = torch.abs(image[:, :, 1:, :] - image[:, :, :-1, :])
+                        mask_dy = final_mask3[:, :, 1:, :] * final_mask3[:, :, :-1, :]
+                        dy_diff = torch.abs(pred_dy - targ_dy) * mask_dy
+                        dy_sum = mask_dy.flatten(1).sum(dim=1).clamp_min(1.0)
+                        dy_loss = (dy_diff.flatten(1).sum(dim=1) / dy_sum).mean()
+                        masked_final_gdl = dx_loss + dy_loss
                 else:
-                    final_gdl = criterion_gdl(final_recon, image)
+                    final_l1 = l1_loss(final_recon, image)
+                
+                # Optional perceptual loss
+                final_perc = None
+                if criterion_perc is not None:
+                    final_perc = criterion_perc(final_recon, image)
+                
+                # Optional MS-SSIM loss
+                final_ssim = None
+                if use_ssim:
+                    # MS-SSIM expects inputs in [-1,1] range, set data_range=2.0
+                    mssim_val = ms_ssim(final_recon, image, data_range=2.0, size_average=True)
+                    final_ssim = 1.0 - mssim_val
+
+                # Optional GDL on final reconstruction
+                final_gdl = None
+                if criterion_gdl is not None:
+                    if use_final_mask and masked_final_gdl is not None:
+                        final_gdl = masked_final_gdl
+                    else:
+                        final_gdl = criterion_gdl(final_recon, image)
             
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
             final_loss = l1_weight * final_l1 * final_mult
@@ -815,47 +845,70 @@ def train(
             if batch_idx % 10 == 0:
                 try:
                     H, W = Config.IMG_SIZE
-                    # Prepare numpy images (convert from [-1,1] to [0,1] for display)
+                    # Prepare numpy image (convert from [-1,1] to [0,1] for display)
                     orig_np = ((image[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
-                    # Use final_recon instead of intermediate reconstruction
-                    recon_np = ((final_recon[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
                     # Compute final decision for first sample and confidence
                     with torch.no_grad():
                         probs = torch.softmax(final_decision_logits, dim=1)
                         pred0 = int(probs[0].argmax().item())
                         conf0 = float(probs[0, pred0].item())
                         true0 = int(labels[0].item())
-                    # Build combined figure
-                    fig, axs = plt.subplots(1, 2, figsize=(8, 4))
-                    # Left: Original with gaze path
-                    axs[0].imshow(orig_np)
-                    if len(gaze_path) > 0:
-                        # Support both shapes: p is (2,) or (B,2); always visualize sample 0
-                        pts = []
-                        for p in gaze_path:
-                            p0 = p if p.dim() == 1 else p[0]
-                            pts.append((int(p0[0].item() * (W - 1)), int(p0[1].item() * (H - 1))))
-                        xs, ys = zip(*pts)
-                        axs[0].scatter(xs, ys, c='r', s=40, marker='x', label='gaze')
-                        axs[0].plot(xs, ys, c='yellow', linewidth=1, alpha=0.8)
-                    axs[0].set_title('Original + gaze path')
-                    axs[0].axis('off')
-                    # Right: Final step reconstruction
-                    axs[1].imshow(recon_np)
-                    axs[1].set_title('Reconstruction (final step)')
-                    # Overlay prediction vs truth text box
-                    txt = f"pred={pred0}  p={conf0*100:.1f}%  true={true0}"
-                    axs[1].text(0.02, 0.98, txt, transform=axs[1].transAxes, va='top', ha='left',
+                    # Build figure: if decoder disabled, only show original + gaze path; otherwise show recon side-by-side
+                    if final_recon is None:
+                        fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+                        ax.imshow(orig_np)
+                        if len(gaze_path) > 0:
+                            pts = []
+                            for p in gaze_path:
+                                p0 = p if p.dim() == 1 else p[0]
+                                pts.append((int(p0[0].item() * (W - 1)), int(p0[1].item() * (H - 1))))
+                            xs, ys = zip(*pts)
+                            ax.scatter(xs, ys, c='r', s=40, marker='x', label='gaze')
+                            ax.plot(xs, ys, c='yellow', linewidth=1, alpha=0.8)
+                        txt = f"pred={pred0}  p={conf0*100:.1f}%  true={true0}"
+                        ax.text(0.02, 0.98, txt, transform=ax.transAxes, va='top', ha='left',
                                 color='white', bbox=dict(facecolor='black', alpha=0.6, boxstyle='round,pad=0.3'), fontsize=9)
-                    axs[1].axis('off')
-                    plt.tight_layout()
-                    if wb is not None:
-                        try:
-                            wandb.log({"train/original_gaze_vs_recon": wandb.Image(fig)}, step=global_step)
-                        except Exception as e:
-                            # Surface the error once to avoid silent failures when image logging breaks
-                            print(f"W&B image log failed: {e}")
-                    plt.close(fig)
+                        ax.set_title('Original + gaze path')
+                        ax.axis('off')
+                        plt.tight_layout()
+                        if wb is not None:
+                            try:
+                                wandb.log({"train/original_gaze": wandb.Image(fig)}, step=global_step)
+                            except Exception as e:
+                                print(f"W&B image log failed: {e}")
+                        plt.close(fig)
+                    else:
+                        # Use final_recon instead of intermediate reconstruction
+                        recon_np = ((final_recon[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
+                        fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+                        # Left: Original with gaze path
+                        axs[0].imshow(orig_np)
+                        if len(gaze_path) > 0:
+                            pts = []
+                            for p in gaze_path:
+                                p0 = p if p.dim() == 1 else p[0]
+                                pts.append((int(p0[0].item() * (W - 1)), int(p0[1].item() * (H - 1))))
+                            xs, ys = zip(*pts)
+                            axs[0].scatter(xs, ys, c='r', s=40, marker='x', label='gaze')
+                            axs[0].plot(xs, ys, c='yellow', linewidth=1, alpha=0.8)
+                        axs[0].set_title('Original + gaze path')
+                        axs[0].axis('off')
+                        # Right: Final step reconstruction
+                        axs[1].imshow(recon_np)
+                        axs[1].set_title('Reconstruction (final step)')
+                        # Overlay prediction vs truth text box
+                        txt = f"pred={pred0}  p={conf0*100:.1f}%  true={true0}"
+                        axs[1].text(0.02, 0.98, txt, transform=axs[1].transAxes, va='top', ha='left',
+                                    color='white', bbox=dict(facecolor='black', alpha=0.6, boxstyle='round,pad=0.3'), fontsize=9)
+                        axs[1].axis('off')
+                        plt.tight_layout()
+                        if wb is not None:
+                            try:
+                                wandb.log({"train/original_gaze_vs_recon": wandb.Image(fig)}, step=global_step)
+                            except Exception as e:
+                                # Surface the error once to avoid silent failures when image logging breaks
+                                print(f"W&B image log failed: {e}")
+                        plt.close(fig)
                 except Exception:
                     pass
                 print(f"Epoch {epoch} Batch {batch_idx}: rec_loss={rec_loss_unscaled.item():.6f} total={total_loss.item():.6f}")
