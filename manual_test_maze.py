@@ -176,6 +176,9 @@ class MazeManualTestGUI:
 		ttk.Button(control, text="Reset on image", command=self.on_reset).pack(side=tk.LEFT, padx=(0, 6))
 		self.btn_next_img = ttk.Button(control, text=f"Next {self.split} image", command=self.on_next_image)
 		self.btn_next_img.pack(side=tk.LEFT, padx=(0, 6))
+		# New: Random image button
+		self.btn_rand_img = ttk.Button(control, text="Random image", command=self.on_random_image)
+		self.btn_rand_img.pack(side=tk.LEFT, padx=(0, 6))
 		self.status = ttk.Label(control, text="Click the original image to set gaze; Next step follows policy")
 		self.status.pack(side=tk.LEFT, padx=(10, 0))
 
@@ -399,12 +402,36 @@ class MazeManualTestGUI:
 			xs.append(cx + 0.5)
 			ys.append(cy + 0.5)
 		if xs:
+			# Connect the steps with a thin line for better path visibility
+			self.axs[0, 0].plot(xs, ys, color='red', linewidth=1.0, alpha=0.8)
 			self.axs[0, 0].scatter(xs, ys, c='red', s=40, marker='x')
 		# current
 		cx = int(self.gaze[0, 0].item() * (W - 1)) + 0.5
 		cy = int(self.gaze[0, 1].item() * (H - 1)) + 0.5
 		self.axs[0, 0].scatter([cx], [cy], c='lime', s=60, marker='o')
 		self.axs[0, 0].set_title('Original + path (x) and current (o)')
+
+		# Overlay decision/confidence directly on the maze for easy screenshots
+		overlay_txt = None
+		overlay_color = 'white'
+		if self.last_probs is not None:
+			dec = self.last_probs.get('decision_probs')
+			if dec is not None and len(dec) >= 2:
+				pred_idx = int(1 if dec[1] >= dec[0] else 0)
+				conf = float(max(dec))
+				pred_name = 'Connected' if pred_idx == 1 else 'Not connected'
+				status = 'Final' if self.stopped else 'Current'
+				overlay_txt = f"{status} decision: {pred_name} (p={conf:.2f})\nsteps={self.step}"
+				overlay_color = '#00ff6a' if pred_idx == 1 else '#ff5252'
+		# Draw overlay box in axes coordinates (top-left)
+		if overlay_txt:
+			self.axs[0, 0].text(
+				0.01, 0.01, overlay_txt,
+				transform=self.axs[0, 0].transAxes,
+				va='bottom', ha='left',
+				fontsize=11, color='white',
+				bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.4', edgecolor='none')
+			)
 
 		# b) Inputs overlay (largest->smallest)
 		comp = composite_fovea(self.last_patches or [], getattr(self, 'last_patches_resized', []) or [])
@@ -503,6 +530,7 @@ class MazeManualTestGUI:
 		self.btn_stop.config(state='normal')
 		self.btn_next.config(state='disabled')
 		self.btn_next_img.config(state='disabled')
+		self.btn_rand_img.config(state='disabled')
 		self._auto_tick()
 
 	def stop_auto_run(self):
@@ -519,6 +547,7 @@ class MazeManualTestGUI:
 		self.btn_stop.config(state='disabled')
 		self.btn_next.config(state='normal')
 		self.btn_next_img.config(state='normal')
+		self.btn_rand_img.config(state='normal')
 
 	def _auto_tick(self):
 		# stop conditions
@@ -608,6 +637,19 @@ class MazeManualTestGUI:
 		# Cancel auto-run if active
 		self.stop_auto_run()
 		self.idx = (self.idx + 1) % len(self.ds)
+		self._load_sample(self.idx)
+		self._draw()
+
+	def on_random_image(self):
+		# Cancel auto-run if active
+		self.stop_auto_run()
+		if len(self.ds) <= 1:
+			self.idx = 0
+		else:
+			new_idx = random.randrange(len(self.ds))
+			if new_idx == self.idx:
+				new_idx = (new_idx + 1) % len(self.ds)
+			self.idx = new_idx
 		self._load_sample(self.idx)
 		self._draw()
 

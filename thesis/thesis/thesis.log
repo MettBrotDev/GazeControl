@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.10.20)  4 NOV 2025 17:22
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2025.10.20)  13 NOV 2025 18:14
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -553,7 +553,7 @@ Package hyperref Info: Option `unicode' set `true' on input line 59.
 File: l3backend-pdftex.def 2024-01-04 L3 backend support: PDF output (pdfTeX)
 \l__color_backend_stack_int=\count302
 \l__pdf_internal_box=\box59
-) (./thesis.aux (./misc/abstract.aux) (./misc/kurzfassung.aux) (./chapter/introduction.aux) (./chapter/methodology.aux) (./chapter/conclusion.aux) (./chapter/appendices.aux) (./misc/abbreviations.aux) (./misc/statement.aux))
+) (./thesis.aux (./misc/abstract.aux) (./misc/kurzfassung.aux) (./chapter/introduction.aux) (./chapter/methodology.aux) (./chapter/results.aux) (./chapter/limitations.aux) (./chapter/conclusion.aux) (./chapter/appendices.aux) (./misc/abbreviations.aux) (./misc/statement.aux))
 \openout1 = `thesis.aux'.
 
 LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 63.
@@ -657,57 +657,107 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
  [6
 
 
+] [7] [8
+
+
 ]
 \openout2 = `chapter/introduction.aux'.
 
  (./chapter/introduction.tex
 chapter 1.
+)
+Underfull \hbox (badness 10000) in paragraph at lines 3--89
 
-Underfull \hbox (badness 10000) in paragraph at lines 3--17
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 3--89
 
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 3--17
+Underfull \hbox (badness 10000) in paragraph at lines 3--89
 
  []
 
-) [1
+
+Underfull \hbox (badness 10000) in paragraph at lines 3--89
+
+ []
+
+
+Underfull \vbox (badness 10000) has occurred while \output is active []
+
+ [1
 
 
 
-
-
-]
+] [2]
 \openout2 = `chapter/methodology.aux'.
 
- (./chapter/methodology.tex [2
-
-
-
-
-
-]
+ (./chapter/methodology.tex
 chapter 2.
-<figures/NetworkDiagram.pdf, id=79, 1927.2pt x 1084.05pt>
-File: figures/NetworkDiagram.pdf Graphic file (type pdf)
-<use figures/NetworkDiagram.pdf>
-Package pdftex.def Info: figures/NetworkDiagram.pdf  used on input line 21.
-(pdftex.def)             Requested size: 380.26855pt x 213.8949pt.
-[3{/usr/share/texmf/fonts/enc/dvips/cm-super/cm-super-ts1.enc}] [4 <./figures/NetworkDiagram.pdf>] [5]
-Overfull \hbox (0.65004pt too wide) in paragraph at lines 82--87
+
+
+pdfTeX warning: pdflatex (file ./figures/Methodology/NetworkDiagram.pdf): PDF inclusion: found PDF version <1.6>, but at most version <1.5> allowed
+<figures/Methodology/NetworkDiagram.pdf, id=127, 1683.28876pt x 731.73375pt>
+File: figures/Methodology/NetworkDiagram.pdf Graphic file (type pdf)
+<use figures/Methodology/NetworkDiagram.pdf>
+Package pdftex.def Info: figures/Methodology/NetworkDiagram.pdf  used on input line 21.
+(pdftex.def)             Requested size: 422.52348pt x 183.66989pt.
+[3
+
+
+
+
+
+{/usr/share/texmf/fonts/enc/dvips/cm-super/cm-super-ts1.enc}]
+Underfull \vbox (badness 10000) has occurred while \output is active []
+
+ [4 <./figures/Methodology/NetworkDiagram.pdf>] [5]
+Overfull \hbox (0.65004pt too wide) in paragraph at lines 82--89
 \OT1/cmr/m/n/12 For the re-in-force-ment loss, we use GAE (Gen-er-al-ized Ad-van-tage Es-ti-ma-tion) ([]Schul-
  []
 
-[6]
-Overfull \hbox (6.86478pt too wide) in paragraph at lines 101--102
+
+Underfull \vbox (badness 1259) has occurred while \output is active []
+
+ [6]
+Overfull \hbox (6.86478pt too wide) in paragraph at lines 105--106
 []\OT1/cmr/bx/n/12 Perceptual Loss: \OT1/cmr/m/n/12 This loss is based on a pre-trained VGG19 net-work ([]Pihlgren
  []
 
-) [7]
-\openout2 = `chapter/conclusion.aux'.
+[7]
+<figures/Methodology/CvrExample.png, id=203, 1080.28593pt x 252.19218pt>
+File: figures/Methodology/CvrExample.png Graphic file (type png)
+<use figures/Methodology/CvrExample.png>
+Package pdftex.def Info: figures/Methodology/CvrExample.png  used on input line 135.
+(pdftex.def)             Requested size: 380.26855pt x 88.77269pt.
+<figures/Methodology/PathfinderSampleCon.png, id=211, 301.125pt x 301.125pt>
+File: figures/Methodology/PathfinderSampleCon.png Graphic file (type png)
+<use figures/Methodology/PathfinderSampleCon.png>
+Package pdftex.def Info: figures/Methodology/PathfinderSampleCon.png  used on input line 152.
+(pdftex.def)             Requested size: 126.75833pt x 126.7611pt.
+<figures/Methodology/PathfinderSampleDisc.png, id=212, 301.125pt x 301.125pt>
+File: figures/Methodology/PathfinderSampleDisc.png Graphic file (type png)
+<use figures/Methodology/PathfinderSampleDisc.png>
+Package pdftex.def Info: figures/Methodology/PathfinderSampleDisc.png  used on input line 157.
+(pdftex.def)             Requested size: 126.75833pt x 126.7611pt.
+ [8 <./figures/Methodology/CvrExample.png>]
+<figures/Methodology/MazeSampleCon.png, id=226, 40.15pt x 40.15pt>
+File: figures/Methodology/MazeSampleCon.png Graphic file (type png)
+<use figures/Methodology/MazeSampleCon.png>
+Package pdftex.def Info: figures/Methodology/MazeSampleCon.png  used on input line 178.
+(pdftex.def)             Requested size: 125.55832pt x 125.56273pt.
+<figures/Methodology/MazeSampleDisc.png, id=227, 40.15pt x 40.15pt>
+File: figures/Methodology/MazeSampleDisc.png Graphic file (type png)
+<use figures/Methodology/MazeSampleDisc.png>
+Package pdftex.def Info: figures/Methodology/MazeSampleDisc.png  used on input line 183.
+(pdftex.def)             Requested size: 125.55832pt x 125.56273pt.
+) [9 <./figures/Methodology/PathfinderSampleCon.png (PNG copy)> <./figures/Methodology/PathfinderSampleDisc.png (PNG copy)> <./figures/Methodology/MazeSampleCon.png (PNG copy)> <./figures/Methodology/MazeSampleDisc.png (PNG copy)>]
+\openout2 = `chapter/results.aux'.
 
- (./chapter/conclusion.tex [8
+ (./chapter/results.tex [10
 
 
 
@@ -715,18 +765,152 @@ Overfull \hbox (6.86478pt too wide) in paragraph at lines 101--102
 
 ]
 chapter 3.
-) [9]
+<figures/Results/SimpleCon.png, id=239, 356.33125pt x 353.32pt>
+File: figures/Results/SimpleCon.png Graphic file (type png)
+<use figures/Results/SimpleCon.png>
+Package pdftex.def Info: figures/Results/SimpleCon.png  used on input line 17.
+(pdftex.def)             Requested size: 126.75833pt x 125.68556pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 17--19
+ [][] 
+ []
+
+<figures/Results/SimpleDisc.png, id=240, 352.31625pt x 351.3125pt>
+File: figures/Results/SimpleDisc.png Graphic file (type png)
+<use figures/Results/SimpleDisc.png>
+Package pdftex.def Info: figures/Results/SimpleDisc.png  used on input line 22.
+(pdftex.def)             Requested size: 126.75833pt x 126.39734pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 22--24
+ [][] 
+ []
+
+<figures/Results/GlimpseExample.png, id=244, 353.32pt x 350.30875pt>
+File: figures/Results/GlimpseExample.png Graphic file (type png)
+<use figures/Results/GlimpseExample.png>
+Package pdftex.def Info: figures/Results/GlimpseExample.png  used on input line 38.
+(pdftex.def)             Requested size: 105.63086pt x 104.72995pt.
+<figures/Results/Exploration1.png, id=247, 353.32pt x 354.32375pt>
+File: figures/Results/Exploration1.png Graphic file (type png)
+<use figures/Results/Exploration1.png>
+Package pdftex.def Info: figures/Results/Exploration1.png  used on input line 51.
+(pdftex.def)             Requested size: 126.75833pt x 127.11852pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 51--53
+ [][] 
+ []
+
+<figures/Results/Exploration2.png, id=248, 353.32pt x 354.32375pt>
+File: figures/Results/Exploration2.png Graphic file (type png)
+<use figures/Results/Exploration2.png>
+Package pdftex.def Info: figures/Results/Exploration2.png  used on input line 56.
+(pdftex.def)             Requested size: 126.75833pt x 127.11852pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 56--58
+ [][] 
+ []
+
+[11 <./figures/Results/SimpleCon.png (PNG copy)> <./figures/Results/SimpleDisc.png (PNG copy)>] [12 <./figures/Results/GlimpseExample.png (PNG copy)> <./figures/Results/Exploration1.png (PNG copy)> <./figures/Results/Exploration2.png (PNG copy)>]
+<figures/Results/StartPositionW.png, id=264, 351.3125pt x 350.30875pt>
+File: figures/Results/StartPositionW.png Graphic file (type png)
+<use figures/Results/StartPositionW.png>
+Package pdftex.def Info: figures/Results/StartPositionW.png  used on input line 84.
+(pdftex.def)             Requested size: 126.75833pt x 126.39435pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 84--86
+ [][] 
+ []
+
+<figures/Results/StartPositionL.png, id=265, 263.48438pt x 263.48438pt>
+File: figures/Results/StartPositionL.png Graphic file (type png)
+<use figures/Results/StartPositionL.png>
+Package pdftex.def Info: figures/Results/StartPositionL.png  used on input line 89.
+(pdftex.def)             Requested size: 126.75833pt x 126.76053pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 89--91
+ [][] 
+ []
+
+<figures/Results/LoopStart.png, id=266, 264.99pt x 263.48438pt>
+File: figures/Results/LoopStart.png Graphic file (type png)
+<use figures/Results/LoopStart.png>
+Package pdftex.def Info: figures/Results/LoopStart.png  used on input line 107.
+(pdftex.def)             Requested size: 126.75833pt x 126.03685pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 107--109
+ [][] 
+ []
+
+<figures/Results/Loop.png, id=267, 355.3275pt x 351.3125pt>
+File: figures/Results/Loop.png Graphic file (type png)
+<use figures/Results/Loop.png>
+Package pdftex.def Info: figures/Results/Loop.png  used on input line 112.
+(pdftex.def)             Requested size: 126.75833pt x 125.32523pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 112--114
+ [][] 
+ []
+
+[13 <./figures/Results/StartPositionW.png (PNG copy)> <./figures/Results/StartPositionL.png> <./figures/Results/LoopStart.png> <./figures/Results/Loop.png (PNG copy)>]
+<figures/Results/ComplicatedSolve.png, id=276, 350.30875pt x 353.32pt>
+File: figures/Results/ComplicatedSolve.png Graphic file (type png)
+<use figures/Results/ComplicatedSolve.png>
+Package pdftex.def Info: figures/Results/ComplicatedSolve.png  used on input line 124.
+(pdftex.def)             Requested size: 105.63086pt x 106.53593pt.
+<figures/Results/ComplicatedUnd.png, id=279, 353.32pt x 351.3125pt>
+File: figures/Results/ComplicatedUnd.png Graphic file (type png)
+<use figures/Results/ComplicatedUnd.png>
+Package pdftex.def Info: figures/Results/ComplicatedUnd.png  used on input line 140.
+(pdftex.def)             Requested size: 126.75833pt x 126.0382pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 140--142
+ [][] 
+ []
+
+<figures/Results/ComplicatedLoop.png, id=280, 352.31625pt x 352.31625pt>
+File: figures/Results/ComplicatedLoop.png Graphic file (type png)
+<use figures/Results/ComplicatedLoop.png>
+Package pdftex.def Info: figures/Results/ComplicatedLoop.png  used on input line 145.
+(pdftex.def)             Requested size: 126.75833pt x 126.75848pt.
+
+Overfull \hbox (1.20001pt too wide) in paragraph at lines 145--147
+ [][] 
+ []
+
+[14 <./figures/Results/ComplicatedSolve.png (PNG copy)> <./figures/Results/ComplicatedUnd.png (PNG copy)> <./figures/Results/ComplicatedLoop.png (PNG copy)>] [15]) [16]
+\openout2 = `chapter/limitations.aux'.
+
+ (./chapter/limitations.tex
+chapter 4.
+[17
+
+
+
+
+
+]) [18]
+\openout2 = `chapter/conclusion.aux'.
+
+ (./chapter/conclusion.tex
+chapter 5.
+[19
+
+
+
+
+
+]) [20]
 \openout2 = `chapter/appendices.aux'.
 
- (./chapter/appendices.tex [10
-
-
-
-
-
-]
+ (./chapter/appendices.tex
 chapter A.
-) [11] [12
+) [21
+
+
+
+
+
+] [22
 
 
 
@@ -738,20 +922,20 @@ chapter A.
 No file misc/abbreviations.tex.
 (./thesis.bbl
 chapter without number
-) [13
+[23
 
 
 
 
 
-]
+]) [24]
 \openout2 = `misc/statement.aux'.
 
- (./misc/statement.tex [14
+ (./misc/statement.tex) [25
 
 
 
-]) [15] (./thesis.aux (./misc/abstract.aux) (./misc/kurzfassung.aux) (./chapter/introduction.aux) (./chapter/methodology.aux) (./chapter/conclusion.aux) (./chapter/appendices.aux) (./misc/abbreviations.aux) (./misc/statement.aux))
+] (./thesis.aux (./misc/abstract.aux) (./misc/kurzfassung.aux) (./chapter/introduction.aux) (./chapter/methodology.aux) (./chapter/results.aux) (./chapter/limitations.aux) (./chapter/conclusion.aux) (./chapter/appendices.aux) (./misc/abbreviations.aux) (./misc/statement.aux))
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
@@ -760,18 +944,18 @@ Package rerunfilecheck Info: File `thesis.out' has not changed.
 (rerunfilecheck)             Checksum: D41D8CD98F00B204E9800998ECF8427E;0.
  ) 
 Here is how much of TeX's memory you used:
- 17000 strings out of 474222
- 299953 string characters out of 5748732
- 1930975 words of memory out of 5000000
- 38918 multiletter control sequences out of 15000+600000
- 567630 words of font info for 70 fonts, out of 8000000 for 9000
+ 17275 strings out of 474222
+ 308545 string characters out of 5748732
+ 1935975 words of memory out of 5000000
+ 39132 multiletter control sequences out of 15000+600000
+ 569676 words of font info for 78 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 122i,8n,121p,10939b,512s stack positions out of 10000i,1000n,20000p,200000b,200000s
-</usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsl12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti12.pfb></usr/share/texmf/fonts/type1/public/cm-super/sfrm1200.pfb>
-Output written on thesis.pdf (21 pages, 219206 bytes).
+ 122i,9n,121p,10939b,666s stack positions out of 10000i,1000n,20000p,200000b,200000s
+</usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsl12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt12.pfb></usr/share/texmf/fonts/type1/public/cm-super/sfrm1200.pfb>
+Output written on thesis.pdf (33 pages, 619783 bytes).
 PDF statistics:
- 318 PDF objects out of 1000 (max. 8388607)
- 254 compressed objects within 3 object streams
- 51 named destinations out of 1000 (max. 500000)
- 126 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 532 PDF objects out of 1000 (max. 8388607)
+ 430 compressed objects within 5 object streams
+ 96 named destinations out of 1000 (max. 500000)
+ 355 words of extra memory for PDF output out of 10000 (max. 10000000)
 

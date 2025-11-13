@@ -37,3 +37,22 @@ Different path lengths
 ssh login.cluster.is.localnet
 
 export WANDB_API_KEY=KEY
+
+
+Can be done now:
+
+Analyze normal results
+
+some handcrafted results
+
+Needs:
+
+Ablation Studies
+
+Make better agent that can navigate deeper mazes (maybe training on those)
+
+Try said agent on differently sized mazes
+
+Maybe but not necessary, Fusion Layer
+
+Maybe another Pathfinder run

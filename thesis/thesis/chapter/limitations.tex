@@ -1,0 +1,31 @@
+\chapter{Limitations}\label{chapter:limitations}
+%
+
+Along the way of developing and testing our model we ran into some limitations that we want to discuss in this chapter.
+
+\section{Reconstruction of Datasets}\label{DatasetLimitation}
+
+As mentioned in Chapter~\ref{chapter:methodology} we originally wanted to use the Pathfinder and CVR datasets to evaluate our model on more complex data.
+However due to the way we implemented our auxiliary loss, using a decoder to reconstruct the input image we ran into a lot of problems since
+these datasets are not really made to reconstruct and therefore are super hard to reconstruct for the model. They consist of thin lines on a mostly blank (or white for the CVR dataset) background
+which gives the model a huge local minima that is very hard to avoid. 
+
+We tried various different loss functions but they were either not enforcing a strong enough learning signal to avoid the local minima or we couldnt use them 
+for local losses around the glimpse and could only run them on the full image, which also harms training since the model never saw some of the regions that it gets penalized on.
+
+We are certain that these problems can be fixed. Be it either with a better way of training the decoder or with a different auxiliary task that is better suited for these datasets.
+One of these different auxiliary losses is for example the Sensorimotor Reward from SUGARL \citep{shang2023activevisionreinforcementlearning} where they basically punish gazes that do not contribute useful information,
+which is measured in the accuracy of the decision making policy.
+However that was not within the scope of this thesis and therefore we had to limit ourselves to the simpler maze dataset.
+
+\section{Parameter and Training Efficiency}
+
+On more simple tasks like the maze dataset our model is pretty inefficient in terms of parameters and training time compared to the classifier model.
+Due to the neccessity of using an LSTM that keeps track of the seen glimpses our model has a lot of parameters compared to other models that just use feedforward architectures.
+Additionaly the training time is significantly higher since we have a lot of components that need to be trained together and the reinforcement learning through time steps 
+is a lot more noisy than a simple classification loss.
+
+However what we lack in efficiency we gain in flexibility, since our model could for example easily adapt to differently sized mazes without retraining or changing the architecture at all 
+(except the decoder, which is not needed for classification though).
+Another major advantage is that our model is already setup to work in a dynamic environment, since we already integrate information over time steps and can therefore directly be used in a setting
+where the input is changing over time, like a video stream from a robot navigating in an environment or a game.

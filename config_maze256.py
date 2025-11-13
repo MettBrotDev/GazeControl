@@ -30,7 +30,7 @@ class Config:
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     # Data: point at Maze dataset images
-    MAZE_ROOT = "./Data/Maze10RandomEasy"
+    MAZE_ROOT = "./Data/Maze10Random"
     LOCAL_DATA_DIR = [MAZE_ROOT]
     MNIST_DATA_DIR = "./Data/mnist"
     CIFAR100_DATA_DIR = "./Data/cifar100"
@@ -74,7 +74,7 @@ class Config:
 
     PRETRAINED_MODEL_PATH = ""  # not used
     # Warm-start for RL: set this to your recon-only checkpoint (e.g., gaze_control_model_local.pth)
-    PRETRAINED_MODEL_PATH = "gaze_control_model_local256.pth"
+    PRETRAINED_MODEL_PATH = "runs/cluster/256.pth"
 
     # Use local Maze dir in training scripts
     DATA_SOURCE = "local"

@@ -21,6 +21,59 @@ import argparse
 from PIL import Image
 import json
 from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+from typing import Optional, Tuple
+
+
+# Top-level worker function (picklable) for multiprocessing
+def _generate_one_sample(
+    kind: str,
+    grid_size: int,
+    block_size: int,
+    random_endpoints: bool,
+    min_path_len: int,
+    base_seed: Optional[int],
+    task_idx: int,
+):
+    """Generate a single maze sample according to kind.
+
+    kind: 'connected', 'disconnected', or 'mixed'
+    Returns tuple (img, label, maze, start, end, plen) or None if unsuccessful.
+    """
+    # Seed deterministically per task if provided
+    if base_seed is not None:
+        # Simple deterministic seed per task
+        per_seed = int((base_seed + task_idx) % (2**32 - 1))
+        np.random.seed(per_seed)
+
+    local_gen = MazeGenerator(grid_size, block_size, random_endpoints)
+    # Attempts threshold to avoid infinite loops when constraints are tight
+    max_attempts = 50000 if (kind == 'connected' and min_path_len > 0) else 200
+    attempts = 0
+    while attempts < max_attempts:
+        if kind == 'connected':
+            want_connected = True
+        elif kind == 'disconnected':
+            want_connected = False
+        else:
+            # mixed
+            want_connected = np.random.rand() < 0.5
+
+        maze, connected, start, end, plen = local_gen.generate_maze(force_disconnected=not want_connected)
+        if connected:
+            if min_path_len > 0 and (plen is None or plen < min_path_len):
+                attempts += 1
+                continue
+            label = 1
+        else:
+            if kind == 'connected':
+                attempts += 1
+                continue
+            label = 0
+        img = local_gen.maze_to_image(maze, start, end)
+        return img, label, maze, start, end, (plen if connected else -1)
+    return None
 
 
 class MazeGenerator:
@@ -385,13 +438,15 @@ class MazeGenerator:
             img[ty0:ty0 + self.block_size, tx0:tx0 + self.block_size] = [255, 0, 0]
         return img
     
-    def generate_dataset(self, num_samples, balance=True, min_path_len: int = 0):
+    def generate_dataset(self, num_samples, balance=True, min_path_len: int = 0, workers: int = 1, seed: Optional[int] = None):
         """
         Generate a dataset of maze images.
         
         Args:
             num_samples: Number of samples to generate
             balance: If True, ensure ~50/50 connected/disconnected split
+            workers: How many processes to use (1 = no parallelism)
+            seed: base RNG seed for reproducibility across workers
             
         Returns:
             images: List of (img_size, img_size, 3) RGB images
@@ -400,6 +455,9 @@ class MazeGenerator:
             starts: List of (sx,sy) start cells
             ends:   List of (tx,ty) end cells
         """
+        # Helper for per-task generation to support parallelism
+        # Removed inner _gen_one; replaced by top-level _generate_one_sample
+
         images = []
         labels = []
         mazes = []
@@ -407,7 +465,82 @@ class MazeGenerator:
         ends = []
         path_lengths = []
         
-        if balance:
+        workers = max(1, int(workers or 1))
+        base_seed = int(seed) if seed is not None else None
+
+        if balance and workers > 1:
+            # Parallel balanced generation
+            num_connected = num_samples // 2
+            num_disconnected = num_samples - num_connected
+            print(f"Generating {num_connected} connected and {num_disconnected} disconnected mazes in parallel with {workers} workers...")
+
+            with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
+                # Maintain limited number of outstanding futures
+                outstanding = {}
+                submitted = 0
+                done_connected = 0
+                done_disconnected = 0
+                target_total = num_connected + num_disconnected
+                pbar = tqdm(total=target_total, desc="Generating (parallel)")
+
+                def maybe_submit(kind: str):
+                    nonlocal submitted
+                    fut = ex.submit(
+                        _generate_one_sample,
+                        kind,
+                        self.grid_size,
+                        self.block_size,
+                        self.random_endpoints,
+                        min_path_len,
+                        base_seed,
+                        submitted,
+                    )
+                    outstanding[fut] = kind
+                    submitted += 1
+
+                # Prime the queue
+                while len(outstanding) < min(workers * 2, target_total):
+                    if done_connected < num_connected:
+                        maybe_submit('connected')
+                    if done_disconnected < num_disconnected and len(outstanding) < min(workers * 2, target_total):
+                        maybe_submit('disconnected')
+
+                while done_connected < num_connected or done_disconnected < num_disconnected:
+                    if not outstanding:
+                        # Safety: if nothing outstanding, submit more
+                        if done_connected < num_connected:
+                            maybe_submit('connected')
+                        if done_disconnected < num_disconnected:
+                            maybe_submit('disconnected')
+                    for fut in as_completed(list(outstanding.keys())):
+                        kind = outstanding.pop(fut)
+                        res = fut.result()
+                        if res is None:
+                            # Resubmit same kind
+                            maybe_submit(kind)
+                            continue
+                        img, label, maze, start, end, plen = res
+                        images.append(img)
+                        labels.append(label)
+                        mazes.append(maze)
+                        starts.append(start)
+                        ends.append(end)
+                        path_lengths.append(plen)
+                        if label == 1:
+                            done_connected += 1
+                        else:
+                            done_disconnected += 1
+                        pbar.update(1)
+                        # Keep pipeline filled
+                        if done_connected < num_connected and (done_connected + done_disconnected) < target_total:
+                            maybe_submit('connected')
+                        if done_disconnected < num_disconnected and (done_connected + done_disconnected) < target_total and len(outstanding) < workers * 2:
+                            maybe_submit('disconnected')
+                        # Break to re-evaluate while condition
+                        break
+                pbar.close()
+
+        elif balance:
             # Generate equal numbers of connected and disconnected
             num_connected = num_samples // 2
             num_disconnected = num_samples - num_connected
@@ -417,7 +550,7 @@ class MazeGenerator:
             # Generate connected mazes
             pbar = tqdm(total=num_connected, desc="Connected mazes")
             count = 0
-            max_attempts = num_connected * 5000 if min_path_len > 0 else num_connected * 10
+            max_attempts = num_connected * 50000 if min_path_len > 0 else num_connected * 10
             attempts_total = 0
             while count < num_connected and attempts_total < max_attempts:
                 maze, connected, start, end, plen = self.generate_maze(force_disconnected=False)
@@ -484,26 +617,69 @@ class MazeGenerator:
             pbar.close()
         else:
             # Generate random mazes (mix) honoring min_path_len for connected ones
-            pbar = tqdm(total=num_samples, desc="Generating mazes")
-            attempts_total = 0
-            while len(images) < num_samples:
-                want_connected = np.random.rand() < 0.5
-                maze, connected, start, end, plen = self.generate_maze(force_disconnected=not want_connected)
-                attempts_total += 1
-                if connected and min_path_len > 0 and (plen is None or plen < min_path_len):
-                    continue
-                img = self.maze_to_image(maze, start, end)
-                images.append(img)
-                labels.append(1 if connected else 0)
-                mazes.append(maze)
-                starts.append(start)
-                ends.append(end)
-                path_lengths.append(plen if plen is not None else -1)
-                pbar.update(1)
-                if attempts_total > num_samples * 2000 and min_path_len > 0:
-                    print(f"[warn] High rejection rate when enforcing min_path_len={min_path_len}; proceeding with current set ({len(images)}).")
-                    break
-            pbar.close()
+            if workers > 1:
+                print(f"Generating {num_samples} mazes (mixed) in parallel with {workers} workers...")
+                with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
+                    outstanding = {}
+                    submitted = 0
+                    pbar = tqdm(total=num_samples, desc="Generating (parallel)")
+
+                    def maybe_submit():
+                        nonlocal submitted
+                        fut = ex.submit(
+                            _generate_one_sample,
+                            'mixed',
+                            self.grid_size,
+                            self.block_size,
+                            self.random_endpoints,
+                            min_path_len,
+                            base_seed,
+                            submitted,
+                        )
+                        outstanding[fut] = True
+                        submitted += 1
+
+                    while len(images) < num_samples:
+                        while len(outstanding) < min(workers * 2, num_samples - len(images)):
+                            maybe_submit()
+                        for fut in as_completed(list(outstanding.keys())):
+                            outstanding.pop(fut, None)
+                            res = fut.result()
+                            if res is None:
+                                if len(images) + len(outstanding) < num_samples:
+                                    maybe_submit()
+                                continue
+                            img, label, maze, start, end, plen = res
+                            images.append(img)
+                            labels.append(label)
+                            mazes.append(maze)
+                            starts.append(start)
+                            ends.append(end)
+                            path_lengths.append(plen)
+                            pbar.update(1)
+                            break
+                    pbar.close()
+            else:
+                pbar = tqdm(total=num_samples, desc="Generating mazes")
+                attempts_total = 0
+                while len(images) < num_samples:
+                    want_connected = np.random.rand() < 0.5
+                    maze, connected, start, end, plen = self.generate_maze(force_disconnected=not want_connected)
+                    attempts_total += 1
+                    if connected and min_path_len > 0 and (plen is None or plen < min_path_len):
+                        continue
+                    img = self.maze_to_image(maze, start, end)
+                    images.append(img)
+                    labels.append(1 if connected else 0)
+                    mazes.append(maze)
+                    starts.append(start)
+                    ends.append(end)
+                    path_lengths.append(plen if plen is not None else -1)
+                    pbar.update(1)
+                    if attempts_total > num_samples * 2000 and min_path_len > 0:
+                        print(f"[warn] High rejection rate when enforcing min_path_len={min_path_len}; proceeding with current set ({len(images)}).")
+                        break
+                pbar.close()
 
         return images, labels, mazes, starts, ends, path_lengths
 
@@ -569,6 +745,8 @@ def main():
                        help='Do not balance connected/disconnected samples')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed for reproducibility')
+    parser.add_argument('--workers', type=int, default=None,
+                       help='Number of parallel worker processes (default: use all logical cores)')
     parser.add_argument('--random-endpoints', action='store_true',
                        help='Randomize start/end positions on edges for each maze')
     parser.add_argument('--min-path-length', type=int, default=0,
@@ -588,6 +766,8 @@ def main():
     print()
     
     generator = MazeGenerator(grid_size=args.grid_size, block_size=args.block_size, random_endpoints=bool(args.random_endpoints))
+    # Resolve workers
+    workers = args.workers if args.workers is not None else os.cpu_count() or 1
     
     # Generate datasets
     print("Generating training set...")
@@ -595,6 +775,8 @@ def main():
         args.train_samples,
         balance=not args.no_balance,
         min_path_len=args.min_path_length,
+        workers=workers,
+        seed=args.seed,
     )
     save_dataset(train_images, train_labels, args.output_dir, split='train', starts=train_starts, ends=train_ends, path_lengths=train_plens)
     print()
@@ -604,6 +786,8 @@ def main():
         args.val_samples,
         balance=not args.no_balance,
         min_path_len=args.min_path_length,
+        workers=workers,
+        seed=args.seed + 1,
     )
     save_dataset(val_images, val_labels, args.output_dir, split='val', starts=val_starts, ends=val_ends, path_lengths=val_plens)
     print()
@@ -613,6 +797,8 @@ def main():
         args.test_samples,
         balance=not args.no_balance,
         min_path_len=args.min_path_length,
+        workers=workers,
+        seed=args.seed + 2,
     )
     save_dataset(test_images, test_labels, args.output_dir, split='test', starts=test_starts, ends=test_ends, path_lengths=test_plens)
     print()

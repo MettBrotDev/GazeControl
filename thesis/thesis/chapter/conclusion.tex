@@ -1,2 +1,39 @@
 \chapter{Conclusion and Future Work}\label{chapter:conclusion}
 %
+
+In this thesis we presented an architecture for using active vision reinforcement learning models to solve visual reasioning tasks.
+
+\section{Summary of Findings}
+
+\begin{itemize}
+    \item We proposed a gaze-control architecture that combines an encoder–policy module with a decoder branch for auxiliary reconstruction loss.
+    \item We evaluated the proposed gaze-control architecture on our Maze benchmark and were able to show that our model is able to successfully learn to classify mazes by actively exploring 
+    them with a limited field of view.
+    \item Though on average worse than a feedforward classifier with full image access, our model showed promising results and was able to solve mazes that the classifier failed on.
+    \item By using ablation studies we were able to show that the decoder branch did improve the training stability and convergence speed of the model. 
+    \item We put a lot of effort into trying to make our model work on more complex datasets like the Pathfinder and CVR datasets, 
+    however we ran into limitations regarding the reconstruction of these datasets.
+\end{itemize}
+
+The main contribution of this thesis is not necessarily the performance of the model on the Maze dataset, but rather the groundwork that we laid for future research in this area.
+We provided a reliable and modular implementation of the gaze-control architecture along with a reproducible data pipeline and evaluation scripts.
+This foundation can be used to easily extend the model to more complex datasets and objectives in future work.
+
+\section{Future Work}
+
+There are a lof of interesting directions for future work that build upon the groundwork laid in this thesis. 
+\begin{itemize}
+    \item \textbf{Different Datasets:} The most obvious next step is to extend the model to more complex datasets like the Pathfinder and CVR datasets.
+    This would require addressing the limitations regarding the reconstruction of these datasets that we discussed in Section~\ref{DatasetLimitation}. But we are
+    confident that this can be achieved with some modifications to the auxiliary loss or the decoder architecture. 
+    It might also be interesting to see what happens if we just accept the reconstruction to be fully black, since we are mainly interested in the loss signal and not in the actual reconstruction.
+    \item \textbf{Alternative Auxiliary Tasks:} Another interesting direction is to explore alternative auxiliary tasks that are better suited for complex datasets.
+    For example, the mentioned Sensorimotor Reward from SUGARL \citep{shang2023activevisionreinforcementlearning} or predictive coding could be used as auxiliary tasks instead of reconstruction. 
+    \item \textbf{Transformer-based visual sequencing:} Explore replacing the recurrent state with a transformer encoder that ingests sequences of foveated patches with explicit positional / 
+    temporal embeddings, possibly enabling improved modeling of spatial / temporal dependencies.
+    \item \textbf{Transfer Learning:} The modular nature of the model makes it well-suited for transfer learning scenarios.
+    Future work could investigate how well the model can transfer knowledge from one dataset to another, or how well it can adapt to new tasks with limited data.
+    \item \textbf{Dynamic Environments:} As earlier mentioned, our model is already setup to work in dynamic environments. This would be an exciting direction for future work, 
+    where the model could be tested in scenarios where the input is changing over time, like a video stream from a robot navigating in an environment or a game. 
+    Robots are a really hot topic right now and combining active vision with robotics could lead to some really interesting applications.
+\end{itemize}

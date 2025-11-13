@@ -1,9 +1,19 @@
 \begin{thebibliography}{}
 
+\bibitem[drewlinsley(2019)drewlinsley]{pathfinder2019github}
+drewlinsley (2019).
+\newblock Pathfinder.
+\newblock \url{https://github.com/drewlinsley/pathfinder}.
+\newblock Accessed: 2025-11-07.
+
 \bibitem[Hochreiter and Schmidhuber(1997)Hochreiter and Schmidhuber]{hochreiter1997long}
 Hochreiter, S. and Schmidhuber, J. (1997).
 \newblock Long short-term memory.
 \newblock {\em Neural computation\/}, {\normalfont\bfseries 9}(8), 1735--1780.
+
+\bibitem[Jaderberg {\em et~al.}(2016)Jaderberg, Mnih, Czarnecki, Schaul, Leibo, Silver, and Kavukcuoglu]{jaderberg2016reinforcementlearningunsupervisedauxiliary}
+Jaderberg, M., Mnih, V., Czarnecki, W.~M., Schaul, T., Leibo, J.~Z., Silver, D., and Kavukcuoglu, K. (2016).
+\newblock Reinforcement learning with unsupervised auxiliary tasks.
 
 \bibitem[Mathieu {\em et~al.}(2016)Mathieu, Couprie, and LeCun]{mathieu2016deepmultiscalevideoprediction}
 Mathieu, M., Couprie, C., and LeCun, Y. (2016).
@@ -29,9 +39,21 @@ Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. (2017).
 Schulman, J., Moritz, P., Levine, S., Jordan, M., and Abbeel, P. (2018).
 \newblock High-dimensional continuous control using generalized advantage estimation.
 
+\bibitem[Shang and Ryoo(2023)Shang and Ryoo]{shang2023activevisionreinforcementlearning}
+Shang, J. and Ryoo, M.~S. (2023).
+\newblock Active vision reinforcement learning under limited visual observability.
+
+\bibitem[Tay {\em et~al.}(2020)Tay, Dehghani, Abnar, Shen, Bahri, Pham, Rao, Yang, Ruder, and Metzler]{tay2020longrangearenabenchmark}
+Tay, Y., Dehghani, M., Abnar, S., Shen, Y., Bahri, D., Pham, P., Rao, J., Yang, L., Ruder, S., and Metzler, D. (2020).
+\newblock Long range arena: A benchmark for efficient transformers.
+
 \bibitem[Wang {\em et~al.}(2004)Wang, Bovik, Sheikh, and Simoncelli]{1284395}
 Wang, Z., Bovik, A., Sheikh, H., and Simoncelli, E. (2004).
 \newblock Image quality assessment: from error visibility to structural similarity.
 \newblock {\em IEEE Transactions on Image Processing\/}, {\normalfont\bfseries 13}(4), 600--612.
+
+\bibitem[Zerroug {\em et~al.}(2022)Zerroug, Vaishnav, Colin, Musslick, and Serre]{zerroug2022benchmarkcompositionalvisualreasoning}
+Zerroug, A., Vaishnav, M., Colin, J., Musslick, S., and Serre, T. (2022).
+\newblock A benchmark for compositional visual reasoning.
 
 \end{thebibliography}

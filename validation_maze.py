@@ -4,6 +4,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["XLA_FLAGS"] = "--xla_gpu_force_compilation_parallelism=1"
 
 import gc
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -227,8 +228,24 @@ def validate(
     # Only compute classification accuracy (mirror train_maze rollout, but greedy actions)
     correct = 0
     total = 0
+    steps_total = 0  # sum of steps taken per sample (1-based)
+
+    # Progress helpers
+    total_batches = len(loader)
+    total_samples = len(dataset)
+    start_ts = time.perf_counter()
+    def fmt_secs(s: float) -> str:
+        if s is None or s != s or s == float("inf"):
+            return "?s"
+        m, sec = divmod(int(s), 60)
+        h, m = divmod(m, 60)
+        if h:
+            return f"{h}h{m:02d}m{sec:02d}s"
+        if m:
+            return f"{m}m{sec:02d}s"
+        return f"{sec}s"
     with torch.no_grad():
-        for batch in loader:
+        for bidx, batch in enumerate(loader, start=1):
             if isinstance(batch, (list, tuple)) and len(batch) >= 3:
                 images, labels, starts_xy = batch
             else:
@@ -331,15 +348,42 @@ def validate(
             preds = final_decision_logits.argmax(dim=1)
             correct += int((preds == labels).sum().item())
             total += int(labels.numel())
+            # Accumulate steps (convert 0-based last_step to 1-based count)
+            steps_total += int((last_step + 1).sum().item())
 
+            # Progress print (single line updated in-place)
+            elapsed = time.perf_counter() - start_ts
+            progress = bidx / max(1, total_batches)
+            rate = bidx / max(1e-6, elapsed)  # batches/sec
+            remaining_batches = max(0, total_batches - bidx)
+            eta = remaining_batches / max(1e-6, rate)
+            acc_running = 100.0 * (correct / max(1, total))
+            processed = total
+            print(
+                f"\rValidating [{bidx}/{total_batches}] "
+                f"{progress*100:5.1f}% | "
+                f"acc {acc_running:6.2f}% | "
+                f"{processed}/{total_samples} samples | "
+                f"ETA {fmt_secs(eta)}",
+                end="",
+                flush=True,
+            )
+
+    # Ensure progress line ends before final summary
+    print()
     acc = 100.0 * correct / max(1, total)
-    print(f"Validation complete: split={split}, accuracy={acc:.2f}% ({correct}/{total})")
+    avg_steps = float(steps_total) / max(1, total)
+    total_elapsed = time.perf_counter() - start_ts
+    print(
+        f"Validation complete: split={split}, accuracy={acc:.2f}% "
+        f"({correct}/{total}), avg_steps={avg_steps:.2f} in {fmt_secs(total_elapsed)}"
+    )
 
     return acc
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Validate GazeControl model on Maze dataset (accuracy only)')
-    parser.add_argument('--config', default='config', help="config module name (e.g. 'config', 'config_maze')")
+    parser.add_argument('--config', default='config_maze', help="config module name (e.g. 'config', 'config_maze')")
     parser.add_argument('--model-path', type=str, default=None, help='Path to checkpoint (supports model+agent dict)')
     parser.add_argument('--split', type=str, default='val', help='Dataset split to validate on')
     parser.add_argument('--data-root', '--maze-root', dest='data_root', type=str, default=None,

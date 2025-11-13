@@ -18,7 +18,7 @@ in a similar way to humans.
 
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=0.9\linewidth]{figures/NetworkDiagram.pdf}
+\includegraphics[width=1\linewidth]{figures/Methodology/NetworkDiagram.pdf}
 \caption[Network architecture diagram]%
 {Network architecture diagram illustrating the key components of the proposed model.}\label{fig:network-architecture}
 \end{figure}
@@ -81,14 +81,18 @@ where $\mathcal{L}_{RL}$ is the reinforcement learning loss and $\mathcal{L}_{re
 \subsection{Reinforcement Learning Loss}
 For the reinforcement loss, we use GAE (Generalized Advantage Estimation) \citep{schulman2018highdimensionalcontinuouscontrolusing} 
 to compute the policy gradient and update the agent's parameters.
-In the beginning we used A2C (Advantage Actor-Critic) \citep{mnih2016asynchronousmethodsdeepreinforcement} as the RL algorithm, 
-but later switched to PPO (Proximal Policy Optimization) \citep{schulman2017proximalpolicyoptimizationalgorithms} 
-since it generally provides more stable training and better performance.
+In the beginning we used A2C (Advantage Actor-Critic) \citep{mnih2016asynchronousmethodsdeepreinforcement} as the RL algorithm.
+We intended to later switch to PPO (Proximal Policy Optimization) \citep{schulman2017proximalpolicyoptimizationalgorithms} 
+since it generally provides more stable training and better performance. However there seemed to be an issue with our PPO implementation that made our model train significantly worse,
+in heinsight that was not an issue with the PPO implementation but some other weird error, since even after reverting to A2C the performance was still worse than before. 
+(This was fixed by going back to an older commit)
 
 We will not go into detail about the specific implementation of the RL loss here, as it is a well-established method in the field of reinforcement learning.
-The only thing that might not be standard is the way we handle the STOP action during training,
+The only thing that might not be standard is the way we handle the stop action during training,
 since we have many components the early episodes are quite complex to learn, so we have to be careful of early stopping.
 Therefore we punish stopping early very heavily if the agent is either not confident about its decision or came to the wrong conclusion and stopped early.
+In practice that seemed to still not be enough since even though we couldnt observe early stopping in the early episodes, forcing the model to take at least a certain number of steps
+for the first half of the training seemed to help a lot with stability and performance.
 
 \subsection{Reconstruction Loss}
 The reconstruction loss is primarily based on the L1 loss between the original input image and the reconstructed image produced by the decoder.
@@ -114,3 +118,70 @@ In the first stage, we pretrain the decoder alone, using an autoencoder setup. T
 that the memory module and encoder can learn to adjust to. That structure will get overwritten or changed in the second training stage,
 but having a good starting point helps getting nice gradients from the reconstruction loss and therefore helps avoiding local minima.
 This is crucial since local minima are a big problem for complex architectures trained with reinforcement learning.
+
+
+\section{Datasets}
+Throughout this thesis we considered three main datasets for evaluating our architecture: 
+
+\subsection{Compositional Visual Reasoning (CVR)}
+We initially planned to use the Compositional Visual Reasoning (CVR) dataset \citep{zerroug2022benchmarkcompositionalvisualreasoning}
+for evaluating our architecture.
+The CVR dataset consists of synthetic images, where there are always four images arranged in a 2$\times$2 grid, containing different objects and shapes.
+The task is to find the odd one out based on a set of compositional rules.
+While this dataset is interesting and challenging, we figured other datasets would be more suitable for our specific architecture and research goals.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/Methodology/CvrExample.png}
+\caption[Network architecture diagram]%
+{Example from the CVR dataset (Reproduced from \citep{zerroug2022benchmarkcompositionalvisualreasoning})}\label{fig:CVR_example}
+\end{figure}
+
+\subsection{Pathfinder}
+The Pathfinder dataset \citep{tay2020longrangearenabenchmark} is another dataset we considered for evaluating our architecture.
+It consists of images with two dots and a bunch of dashed lines, where the task is to determine whether there is a continuous path
+connecting the two dots.
+This dataset is very interesting for our architecture, since it requires long-range visual reasoning and attention to detail.
+However, it turned out that the very thin lines with most of the image being just background made it very difficult to reconstruct,
+which made training the auxiliary decoder challenging.
+
+\begin{figure}[!htbp]
+\centering
+\begin{minipage}[t]{0.3\linewidth}
+\centering
+\includegraphics[width=\linewidth]{figures/Methodology/PathfinderSampleCon.png}
+{\small connected}
+\end{minipage}\hspace{0.015\linewidth}
+\begin{minipage}[t]{0.3\linewidth}
+\centering
+\includegraphics[width=\linewidth]{figures/Methodology/PathfinderSampleDisc.png}
+{\small disconnected}
+\end{minipage}
+\caption[Pathfinder examples]{Pathfinder examples (Generated using \citep{pathfinder2019github})}\label{fig:pathfinder_examples}
+\end{figure}
+
+\subsection{Maze Dataset}
+The Maze dataset is a new synthetic dataset we created, which consists of simple mazes with a clear path from start to end.
+The task is for the agent to navigate from the start to the end of the maze, while classifying whether such a path exists or not.
+Connected mazes carve a main path from start to end using depth-first search and then add random branches to increase complexity.
+
+Mazes are built in a grid, where each cell has 4 pixels and is either a wall, a free space, or start/finish.
+These grids can be of any size, e.g. 10$\times$10 cells (40$\times$40 pixels) or 15$\times$15 cells (60$\times$60 pixels).
+We also have options to get specific path lengths, and can therefore control the complexity of the mazes.
+
+\begin{figure}[!htbp]
+\centering
+\setlength{\fboxsep}{0pt}
+\setlength{\fboxrule}{0.6pt}
+\begin{minipage}[t]{0.3\linewidth}
+\centering
+\fbox{\includegraphics[width=\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax]{figures/Methodology/MazeSampleCon.png}}
+{\small connected}
+\end{minipage}\hspace{0.015\linewidth}
+\begin{minipage}[t]{0.3\linewidth}
+\centering
+\fbox{\includegraphics[width=\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax]{figures/Methodology/MazeSampleDisc.png}}
+{\small disconnected}
+\end{minipage}
+\caption[Maze examples]{Maze examples (10$\times$10 Grid)}\label{fig:maze_examples}
+\end{figure}

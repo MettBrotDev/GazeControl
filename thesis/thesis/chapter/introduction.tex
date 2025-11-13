@@ -14,4 +14,11 @@ They also usually only use a single feedforward pass to process an image, leadin
 Research in active vision and attention-based reinforcement learning has begun to address these limitations.
 Models such as the Recurrent Attention Model (RAM) \citep{mnih2014recurrentmodelsvisualattention} and its variants have demonstrated
 the potential of foveated vision and sequential attention mechanisms in artificial agents.
-
+In addition to these attention mechanisms, auxiliary tasks such as image reconstruction have been shown to improve the stability and performance of reinforcement learning agents \citep{jaderberg2016reinforcementlearningunsupervisedauxiliary}.\\\\
+%
+In this thesis, we propose a novel architecture that combines a recurrent visual attention mechanism with an auxiliary reconstruction task to enable artificial agents to efficiently process visual information.
+Our agent will be trained to learn two policies, a decision making policy that classifies the input based on the glimpses seen so far, and a sensory policy that decides where to look next. 
+This sensory policy will move the gaze to points of interest on the input image, integrating information over time to enable the decision making policy to make accurate classifications.
+We want to combine the benefits of active vision with the stabilizing effects of auxiliary tasks to create a robust and interpretable model for visual reasoning tasks.\\\\
+%
+This work will be a foundation that can be built upon and improved in future research and adapted to more difficult tasks, such as dynamic environments or real-world applications.
