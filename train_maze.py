@@ -562,6 +562,12 @@ def train(
                     min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
                     if step < min(min_steps, num_steps) - 1:
                         stop_sample = torch.zeros_like(stop_sample)
+                    # Confidence gating: only allow STOP if classifier confidence >= threshold
+                    conf_thresh = float(getattr(Config, 'STOP_CONF_THRESH', 0.9))
+                    if conf_thresh is not None and conf_thresh > 0.0:
+                        with torch.no_grad():
+                            conf = torch.softmax(decision_logits_step, dim=1).amax(dim=1)
+                        stop_sample = torch.where(conf >= conf_thresh, stop_sample, torch.zeros_like(stop_sample))
                     stop_lp = stop_dist.log_prob(stop_sample)  # (B,)
                     # Compose joint logprob and entropy (approximate add)
                     logprob = move_lp + stop_lp
