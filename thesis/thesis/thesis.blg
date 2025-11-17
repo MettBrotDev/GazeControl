@@ -2,55 +2,54 @@ This is BibTeX, Version 0.99d (TeX Live 2023/Debian)
 Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
 The top-level auxiliary file: thesis.aux
 A level-1 auxiliary file: misc/abstract.aux
-A level-1 auxiliary file: misc/kurzfassung.aux
 A level-1 auxiliary file: chapter/introduction.aux
+A level-1 auxiliary file: chapter/foundation.aux
 A level-1 auxiliary file: chapter/methodology.aux
 A level-1 auxiliary file: chapter/results.aux
 A level-1 auxiliary file: chapter/limitations.aux
 A level-1 auxiliary file: chapter/conclusion.aux
 A level-1 auxiliary file: chapter/appendices.aux
-A level-1 auxiliary file: misc/abbreviations.aux
 The style file: natbib.bst
 A level-1 auxiliary file: misc/statement.aux
 Database file #1: thesis.bib
-You've used 13 entries,
+You've used 18 entries,
             2378 wiz_defined-function locations,
-            594 strings with 6733 characters,
-and the built_in function-call counts, 5850 in all, are:
-= -- 508
-> -- 503
-< -- 3
-+ -- 155
-- -- 151
-* -- 558
-:= -- 1129
-add.period$ -- 42
-call.type$ -- 13
-change.case$ -- 80
-chr.to.int$ -- 13
-cite$ -- 13
-duplicate$ -- 188
-empty$ -- 266
-format.name$ -- 168
-if$ -- 1091
+            624 strings with 7658 characters,
+and the built_in function-call counts, 8360 in all, are:
+= -- 736
+> -- 679
+< -- 4
++ -- 207
+- -- 203
+* -- 802
+:= -- 1577
+add.period$ -- 64
+call.type$ -- 18
+change.case$ -- 111
+chr.to.int$ -- 18
+cite$ -- 18
+duplicate$ -- 283
+empty$ -- 415
+format.name$ -- 227
+if$ -- 1582
 int.to.chr$ -- 1
 int.to.str$ -- 0
-missing$ -- 2
-newline$ -- 59
-num.names$ -- 52
-pop$ -- 83
+missing$ -- 6
+newline$ -- 83
+num.names$ -- 72
+pop$ -- 120
 preamble$ -- 1
-purify$ -- 80
+purify$ -- 111
 quote$ -- 0
-skip$ -- 139
+skip$ -- 197
 stack$ -- 0
-substring$ -- 224
-swap$ -- 27
+substring$ -- 356
+swap$ -- 43
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 117
+type$ -- 162
 warning$ -- 0
-while$ -- 42
+while$ -- 61
 width$ -- 0
-write$ -- 142
+write$ -- 203

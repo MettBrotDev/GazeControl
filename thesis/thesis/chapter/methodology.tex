@@ -12,9 +12,9 @@ Since the aim of the architecture is to mimic human visual attention, we need to
     \item \textbf{Agent:} A reinforcement learning framework that allows the agent to learn from its interactions with the environment and improve its attention and decision-making strategy over time.
     \item \textbf{Decoder:} As a final component, we introduce an auxiliary decoder that helps to stabilize the learning process and improve the interpretability of the agent's internal representations.
 \end{itemize}
-
-Together they make the agent be able to reason about where to look in a visual scene and how to use that information to perform tasks effectively
-in a similar way to humans.
+%
+Together, they enable the agent to reason about where to look in a visual scene and how to use that information to perform tasks effectively
+in a similar way to humans. The overall architecture is illustrated in Figure~\ref{fig:network-architecture}.
 
 \begin{figure}[!htbp]
 \centering
@@ -27,24 +27,28 @@ in a similar way to humans.
 
 \subsection{Encoder}
 The encoder is responsible for processing the visual input and extracting relevant features.
-For the purpose of our architecture, we use a convolutional neural network (CNN) as the encoder and keep that one relatively small, since it will only
+For the purpose of our architecture, we use a convolutional neural network (CNN)~\ref{foundation:CNN} as the encoder and keep that one relatively small, since it will only
 process small cutouts of the image.
-We looked into and tested different ways of implementing foveated vision, such as multi-scale image patches, gaussian blurring or specific downsampling techniques.
-In the end we decided to go with a simple multi-scale patch extraction approach, similar to the one used in the Recurrent Attention Model (RAM) \citep{mnih2014recurrentmodelsvisualattention}.
-That means we take multiple square patches of increasing size around the current gaze location,
-downsample them to a fixed size and pass all of those patches through the same CNN encoder.
+We looked into and tested different ways of implementing foveated vision, such as multi-scale image patches, Gaussian blurring, or specific downsampling techniques.
+In the end, we decided to go with a simple multi-scale patch extraction approach, similar to the one used in the Recurrent Attention Model (RAM) \citep{mnih2014recurrentmodelsvisualattention}.
+That means we take three square patches of increasing size (e.g., 4$\times$4, 8$\times$8, 16$\times$16, which are the values used for the maze model) around the current gaze location,
+downsample them to the smallest size (e.g., 4$\times$4) and pass all of those patches separately through the same CNN encoder.
 Using this method allows us to simulate foveation while keeping the encoder architecture and compute requirements simple and efficient.
 
-\subsection{Fusionlayer}
+\newpage
+
+\subsection{Fusion Layer}
 After extracting features from the different patches, we need to combine them into a single feature representation.
-For that, we use a simple fully connected fusion layer that takes the concatenated features, aswell as encoded gaze coordinates as input and produces a fixed-size feature vector as output.
+For that, we use a simple MLP~\ref{foundation:MLP} that takes the concatenated features, as well as gaze coordinates 
+as an input and produces a fixed-size feature vector as output.
+These gaze coordinates get encoded before being passed into the fusion layer using sinusoidal positional encoding.
 We use it to preprocess the information into a vector that is easier to interpret and work with for the memory module.
-This Idea originates from the Glimpse Network from \citep{mnih2014recurrentmodelsvisualattention}.
+This idea originates from the Glimpse Network \citep{mnih2014recurrentmodelsvisualattention}.
 
 \subsection{Memory Module}
 The memory module is a crucial component of the architecture, as it allows the agent to, step by step, build an understanding of the
 environment.
-For this we use a standard long short-term memory (LSTM) network \citep{hochreiter1997long} as the memory module.
+For this, we use a standard long short-term memory (LSTM)~\ref{foundation:RNN} network as the memory module.
 The LSTM takes the fused feature vector from the encoder as input at each time step and updates its internal state accordingly.
 The hidden state of the LSTM serves as the agent's memory representation, which is used to feed into both the agent and the auxiliary decoder.
 
@@ -52,76 +56,76 @@ The hidden state of the LSTM serves as the agent's memory representation, which 
 The agent is an actor-critic based reinforcement learning framework that consists of three policy heads and one value head:
 \begin{itemize}
     \item The first policy head outputs logits over the 8 possible discrete move actions (Categorical).
-    \item The second policy head outputs a Bernoulli logit for the stop action terminate the episode.
-    \item The third policy head outputs a binary classification logit for the final descision.
+    \item The second policy head outputs a Bernoulli logit for the stop action to terminate the episode.
+    \item The third policy head outputs a binary classification logit for the final decision.
     \item The value head predicts $V(s_t)$ for advantage estimation.
 \end{itemize}
-All of these heads share a common fully connected layer that processes the LSTM hidden state, combined with the current gaze location before feeding it into the individual heads.
+All of these heads share a common fully connected layer that processes the LSTM hidden state, combined with the current gaze location, before feeding it into the individual heads.
 
 \subsection{Decoder}
-The auxiliary decoder is designed to reconstruct the visual input based on the agent's memory representation.
+The auxiliary decoder, which is also a CNN~\ref{foundation:CNN} is designed to reconstruct the visual input based on the agent's memory representation.
 The purpose of the decoder is twofold: first, it encourages the memory module to learn meaningful and stable representations of the visual input.
-Training encoder, fusion layer and memory together with just the reinforcement learning signal from the agent would most likely lead to unstable training and poor performance.
+Training the encoder, fusion layer, and memory together with just the reinforcement learning signal from the agent would lead to 
+slower training and poorer performance, as shown in section~\ref{subsec:AblationDecoder}.
 The reconstruction loss from the decoder provides an additional training signal that helps to stabilize the learning process and gives the latent space more structured representations and gradients.
 Second, the decoder allows us to interpret the agent's internal memory state by visualizing what the agent `remembers' about the visual input at each time step.
-Do note that the decoder and agent, while being trained jointly, do not share any weights or parameters or loss signals. Therefore their interpretation of the latent space might be different.
-However, both components ultimately use the same memory representations and make decisions based on them so even though they might have different perspectives,
+Do note that the decoder and agent, while being trained jointly, do not share any weights or parameters or loss signals. Therefore, their interpretation of the latent space might be different.
+However, both components ultimately use the same memory representations and make decisions based on them, so even though they might have different perspectives,
 the decoder still gives us valuable insights into the agent's understanding of the visual input.
 
 \section{Losses}
 
-The overall loss function for training the model consists of two main components: the reinforcement learning loss from the agent and the reconstruction loss from the auxiliary decoder.
-Both of these losses train the encoder, fusion layer and memory module jointly, while the agent only trains with the reinforcement learning loss and the decoder only trains with the reconstruction loss.
+The overall loss function for training the model consists of two main components: The reinforcement learning loss from the agent and the reconstruction loss from the auxiliary decoder.
+Both of these losses train the encoder, fusion layer, and memory module jointly, while the agent only trains with the reinforcement learning loss and the decoder only trains with the reconstruction loss.
 The total loss can be expressed as:
 \begin{equation}
-    \mathcal{L}_{total} = \mathcal{L}_{RL} + \mathcal{L}_{rec}
+    \mathcal{L}_{total} = \lambda_{RL} \mathcal{L}_{RL} + \mathcal{L}_{rec}
 \end{equation}
-where $\mathcal{L}_{RL}$ is the reinforcement learning loss and $\mathcal{L}_{rec}$ is the reconstruction loss.
+Where $\mathcal{L}_{RL}$ is the reinforcement learning loss and $\mathcal{L}_{rec}$ is the reconstruction loss.
+We only scale the reinforcement learning loss since the reconstruction loss is scaled by its individual components.
 
 \subsection{Reinforcement Learning Loss}
-For the reinforcement loss, we use GAE (Generalized Advantage Estimation) \citep{schulman2018highdimensionalcontinuouscontrolusing} 
+For the reinforcement loss, we use GAE (Generalized Advantage Estimation)
 to compute the policy gradient and update the agent's parameters.
-In the beginning we used A2C (Advantage Actor-Critic) \citep{mnih2016asynchronousmethodsdeepreinforcement} as the RL algorithm.
-We intended to later switch to PPO (Proximal Policy Optimization) \citep{schulman2017proximalpolicyoptimizationalgorithms} 
-since it generally provides more stable training and better performance. However there seemed to be an issue with our PPO implementation that made our model train significantly worse,
-in heinsight that was not an issue with the PPO implementation but some other weird error, since even after reverting to A2C the performance was still worse than before. 
-(This was fixed by going back to an older commit)
+In the beginning, we used A2C (Advantage Actor-Critic) as the RL algorithm.
+We also tried to use PPO (Proximal Policy Optimization) \citep{schulman2017proximalpolicyoptimizationalgorithms}, however we couldn't make it work well with our architecture and training setup.
 
-We will not go into detail about the specific implementation of the RL loss here, as it is a well-established method in the field of reinforcement learning.
-The only thing that might not be standard is the way we handle the stop action during training,
-since we have many components the early episodes are quite complex to learn, so we have to be careful of early stopping.
-Therefore we punish stopping early very heavily if the agent is either not confident about its decision or came to the wrong conclusion and stopped early.
-In practice that seemed to still not be enough since even though we couldnt observe early stopping in the early episodes, forcing the model to take at least a certain number of steps
+%
+We use standard reinforcement learning techniques for the training, as explained in section~\ref{foundation:RL}, 
+except for the way we handle the stop action during training.
+Since we have many components, the early episodes are quite complex to learn, so we have to be careful of early stopping.
+Therefore, we punish stopping early with a high penalty if the agent is either not confident about its decision or came to the wrong conclusion and stopped early.
+In practice, that seemed to still not be enough since even though we couldn't observe early stopping in the early episodes, forcing the model to take at least a certain number of steps
 for the first half of the training seemed to help a lot with stability and performance.
 
 \subsection{Reconstruction Loss}
 The reconstruction loss is primarily based on the L1 loss between the original input image and the reconstructed image produced by the decoder.
 However, since the agent only sees parts of the image, we only compute the reconstruction loss over the areas that the agent has actually observed through its gaze,
-since the fully reconstruction isnt actually our goal. The goal of this loss is to stabilize the latent representations in the memory module,
+since the full reconstruction isn't actually our goal. The goal of this loss is to stabilize the latent representations in the memory module,
 since we can assume that if we can reconstruct the seen parts of the image well, the latent representation must contain useful information about those parts.
-We dont care about the unseen parts of the image, since the agent has no information about them anyway.
+We don't care about the unseen parts of the image, since the agent has no information about them anyway.
 For more complicated to reconstruct datasets we used a combination of multiple losses on top of the L1 loss.
 \begin{itemize}
-    \item \textbf{Perceptual Loss:} This loss is based on a pretrained VGG19 network \citep{pihlgren2024systematicperformanceanalysisdeep} and helps to capture high-level features in the reconstructed images and therefore helps shaping the latent space. It computes the L2 loss between feature maps of the original and reconstructed images at different layers of the VGG19 network.
-    \item \textbf{SSIM Loss:} The Structural Similarity Index Measure (SSIM) \citep{1284395} loss helps to improve the structural quality of the reconstructed images and encourages the model to focus on important features.
+    \item \textbf{Perceptual Loss:} This loss is based on a pretrained VGG19 network \citep{pihlgren2024systematicperformanceanalysisdeep} and helps to capture high-level features in the reconstructed images and therefore helps shape the latent space. It computes the L2 loss between the feature maps of the original and reconstructed images at different layers of the VGG19 network.
+    \item \textbf{SSIM Loss:} SSIM \citep{1284395} evaluates similarity by measuring how well the luminance, contrast, and structural relationships between local image patches are preserved. Using SSIM as a loss encourages the model to maintain edges, shapes, and fine structural details that are important for human perception.
     \item \textbf{Gradient Discrepancy Loss:} The GDL loss \citep{mathieu2016deepmultiscalevideoprediction} focuses on matching the gradients between pixels of the original and reconstructed images, which helps to preserve edges and fine details in the reconstructions.
 \end{itemize}
 The final reconstruction loss is a weighted combination of all the mentioned losses at the last step of a reconstruction task, 
 as well as a masked L1 loss at each step to actively encourage step-by-step reconstruction:
 \begin{equation}
-    \mathcal{L}_{rec} = \lambda_{L1} \mathcal{L}_{L1}^{steps} + \lambda_{L1}^{final} \mathcal{L}_{L1}^{final} + \lambda_{perc} \mathcal{L}_{perc} + \lambda_{ssim} \mathcal{L}_{ssim} + \lambda_{gdl} \mathcal{L}_{gdl}
+    \mathcal{L}_{rec} = \lambda_{L1}^{steps} \mathcal{L}_{L1}^{steps} + \lambda_{L1}^{final} \mathcal{L}_{L1}^{final} + \lambda_{perc} \mathcal{L}_{perc} + \lambda_{ssim} \mathcal{L}_{ssim} + \lambda_{gdl} \mathcal{L}_{gdl}
 \end{equation}
 
 \section{Pretraining}
 Since training all of the components at once from scratch is quite difficult and unstable, we use a two-stage training process.
-In the first stage, we pretrain the decoder alone, using an autoencoder setup. Through this we give the decoder an expected latent space `structure',
+In the first stage, we pretrain the decoder alone, using an autoencoder~\ref{foundation:Autoenc} setup. Through this, we give the decoder an expected latent space `structure'
 that the memory module and encoder can learn to adjust to. That structure will get overwritten or changed in the second training stage,
-but having a good starting point helps getting nice gradients from the reconstruction loss and therefore helps avoiding local minima.
-This is crucial since local minima are a big problem for complex architectures trained with reinforcement learning.
+but having a good starting point helps get nice gradients from the reconstruction loss and therefore helps avoid local minima.
+This is crucial since local minima are a big problem for complex architectures trained with reinforcement learning \citep{BUSONIU20188}.
 
 
-\section{Datasets}
-Throughout this thesis we considered three main datasets for evaluating our architecture: 
+\section{Datasets}\label{sec:datasets}
+Throughout this thesis, we considered three main datasets for evaluating our architecture: 
 
 \subsection{Compositional Visual Reasoning (CVR)}
 We initially planned to use the Compositional Visual Reasoning (CVR) dataset \citep{zerroug2022benchmarkcompositionalvisualreasoning}
@@ -133,7 +137,7 @@ While this dataset is interesting and challenging, we figured other datasets wou
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=0.9\linewidth]{figures/Methodology/CvrExample.png}
-\caption[Network architecture diagram]%
+\caption[CVR Example]%
 {Example from the CVR dataset (Reproduced from \citep{zerroug2022benchmarkcompositionalvisualreasoning})}\label{fig:CVR_example}
 \end{figure}
 
@@ -142,8 +146,11 @@ The Pathfinder dataset \citep{tay2020longrangearenabenchmark} is another dataset
 It consists of images with two dots and a bunch of dashed lines, where the task is to determine whether there is a continuous path
 connecting the two dots.
 This dataset is very interesting for our architecture, since it requires long-range visual reasoning and attention to detail.
-However, it turned out that the very thin lines with most of the image being just background made it very difficult to reconstruct,
-which made training the auxiliary decoder challenging.
+However, it turned out that the very thin lines with most of the image being just background made it very difficult to reconstruct.
+The model has to train the encoder, learn how to combine the information in the fusion layer, then figure out how to store that information in the memory module,
+and finally, the decoder has to reconstruct very thin lines based on that information.
+Learning all of that is quite complex, so if the training signal from the reconstructions is as weak as it is for this dataset, the model struggles to learn properly 
+and ends up in a fully black local minima.
 
 \begin{figure}[!htbp]
 \centering
@@ -165,9 +172,10 @@ The Maze dataset is a new synthetic dataset we created, which consists of simple
 The task is for the agent to navigate from the start to the end of the maze, while classifying whether such a path exists or not.
 Connected mazes carve a main path from start to end using depth-first search and then add random branches to increase complexity.
 
-Mazes are built in a grid, where each cell has 4 pixels and is either a wall, a free space, or start/finish.
-These grids can be of any size, e.g. 10$\times$10 cells (40$\times$40 pixels) or 15$\times$15 cells (60$\times$60 pixels).
+Mazes are built in a grid, where each cell has 4 pixels and is either a wall, a free space, or a start/finish.
+These grids can be of any size, e.g., 10$\times$10 cells (40$\times$40 pixels) or 15$\times$15 cells (60$\times$60 pixels).
 We also have options to get specific path lengths, and can therefore control the complexity of the mazes.
+For our experiments, we mainly used a set of 100k 10$\times$10 mazes with 3k validation and 3k test images.
 
 \begin{figure}[!htbp]
 \centering

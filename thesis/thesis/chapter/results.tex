@@ -2,11 +2,11 @@
 %
 
 In this section, we report results for the proposed gaze-control model. 
-On the Maze task we achieved promising overall performance. We can observe nice exploration behavior of the agent and fairly good generalization to unseen mazes.
+On the Maze task, we achieved promising overall performance. We can observe nice exploration behavior of the agent and fairly good generalization to unseen mazes.
 
 \section{Model Performance}
 
-With our current model we are able to achieve an accuracy of around 96.5\% on the validation set, that consists of 3000 randomly generated mazes.
+With our current model, we are able to achieve an accuracy of around 96.5\% on the validation set, which consists of 3000 randomly generated mazes.
 
 \begin{figure}[!htbp]
 \centering
@@ -24,14 +24,14 @@ With our current model we are able to achieve an accuracy of around 96.5\% on th
 \end{minipage}
 \caption[Validation Examples]{Randomly picked Validation Examples}\label{fig:ValidationExamples}
 \end{figure}
-
+%
 These are some randomly picked validation examples of the maze task in Figure~\ref{fig:ValidationExamples}. 
-As we can see the agent is able to successfully classify both the connected and disconnected maze.
+As we can see, the agent is able to successfully classify both the connected and disconnected mazes.
 We can observe quite nice behavior of the agent, especially in the disconnected example, where the agent actually sees the goal in the very first glimpse
-and then goes on to try and find a path to it. Only after exploring all of the walls surrounding it and not finding a path to the goal it correctly classifies the maze as disconnected.
+and then goes on to try and find a path to it. Only after exploring all of the walls surrounding it and not finding a path to the goal, does it correctly classify the maze as disconnected.
 
-Also just to show how the agent perceives the maze we can look at Figure~\ref{fig:GlimpseExample}, which shows the last glimpse of the connected example in Figure~\ref{fig:ValidationExamples}.
-As we can see the agent doesnt get a lot of information on each step and has to rely on its memory to be able to successfully navigate the maze.
+Also, just to show how the agent perceives the maze, we can look at Figure~\ref{fig:GlimpseExample}, which shows the last glimpse of the connected example in Figure~\ref{fig:ValidationExamples}.
+As we can see, the agent doesn't get a lot of information on each step and has to rely on its memory to be able to successfully navigate the maze.
 
 \begin{figure}[!htbp]
 \centering
@@ -58,22 +58,22 @@ As we can see the agent doesnt get a lot of information on each step and has to 
 \end{minipage}
 \caption[Exploration Examples]{Showcase of exploration behavior of the agent}\label{fig:ExplorationExamples}
 \end{figure}
-
-In Figure~\ref{fig:ExplorationExamples} we took one of the validation mazes, where we saw it skipping over a dead end without looking into it and moved the goal into that deadend.
-As we can see the agent memorizes where it skipped a path and after not finding the goal in the other path it backtracks and explores the deadend it skipped before, 
+%
+In Figure~\ref{fig:ExplorationExamples}, we took one of the validation mazes, where we saw it skipping over a dead end without looking into it, and moved the goal into that dead end.
+As we can see, the agent memorizes where it skipped a path and after not finding the goal in the other path, it backtracks and explores the dead end it skipped before, 
 showing that it is able to remember its previous observations and adapt its exploration strategy accordingly.
 
 \subsection{Starting Position}\label{subsec:StartingPosition}
 
-Since the starting position of the agent is chosen randomly on the start patch we can also analyze how much the starting position matters for the consistency of the agent.
-As shown in Figure~\ref{fig:StartingPositionExample} there are certain mazes where the starting position can have a big impact on the decision of the agent.
+Since the starting position of the agent is chosen randomly on the start patch, we can also analyze how much the starting position matters for the consistency of the agent.
+As shown in Figure~\ref{fig:StartingPositionExample}, there are certain mazes where the starting position can have a big impact on the decision of the agent.
 
 That issue is most likely caused by the combination of us using a discrete action space and the blurring of the outer areas of the glimpse. Because we only 
-work with very little pixels per glimpse the blurring can either have a big impact on what the agent actually sees or not, depending on the exact position.
-If a wall is aligned with the blur, there wont be any blurring done at all, while if the wall is slightly off the blur will make it much harder to see.
+work with very few pixels per glimpse, the blurring can either have a big impact on what the agent actually sees or not, depending on the exact position.
+If a wall is aligned with the blur, there won't be any blurring done at all, while if the wall is slightly off the blur will make it much harder to see.
 
-In theory the agent should be able to realize that the information it has is uncertain and therefore explore more to be able to make a better descision in such cases.
-However that doesnt seem to always happen and therefore lead to these inconsistencies.
+In theory, the agent should be able to realize that the information it has is uncertain, and therefore explore more to be able to make a better decision in such cases.
+However, that doesn't always seem to happen and therefore leads to these inconsistencies.
 
 \begin{figure}[!htbp]
 \centering
@@ -89,14 +89,14 @@ However that doesnt seem to always happen and therefore lead to these inconsiste
 \fbox{\includegraphics[width=\linewidth]{figures/Results/StartPositionL.png}}
 {\small incorrect}
 \end{minipage}
-\caption[Starting position example]{An example for a maze where the initial position matters}\label{fig:StartingPositionExample}
+\caption[Starting position example]{An example of a maze where the initial position matters}\label{fig:StartingPositionExample}
 \end{figure}
 
 
 \subsection{Handpicked Mazes}\label{subsec:HandpickedMazes}
 
-To further analyze the performance of our model we also created a set of handpicked mazes that are meant to be more challenging for the agent, just to explore its capabilities further.
-These mazes are build to highlight certain challenges for the agent, like long corridors, lots of deadends or special structures that wont be found in randomly generated mazes.
+To further analyze the performance of our model, we also created a set of handpicked mazes that are meant to be more challenging for the agent, just to explore its capabilities further.
+These mazes are built to highlight certain challenges for the agent, like long corridors, lots of dead ends, or special structures that won't be found in randomly generated mazes.
 
 \begin{figure}[!htbp]
 \centering
@@ -112,24 +112,24 @@ These mazes are build to highlight certain challenges for the agent, like long c
 \fbox{\includegraphics[width=\linewidth]{figures/Results/Loop.png}}
 {\small Loop}
 \end{minipage}
-\caption[Handpicked Maze 1]{Behavior on one of the handpicked mazes}\label{fig:HandpickedMaze1}
+\caption[Handpicked Maze 1]{Behavior in one of the handpicked mazes}\label{fig:HandpickedMaze1}
 \end{figure}
-
-In Figure~\ref{fig:HandpickedMaze1} we can see one of these handpicked mazes, where the agent initially has a pretty decent run.
-It explores the entire corridor and finds the goal. However the decision head doesnt get certain enough about the connectivity of the maze
-and therefore doesnt stop the run. After that the agent aimlessly wanders around, getting stuck in a loop.
+%
+In Figure~\ref{fig:HandpickedMaze1}, we can see one of these handpicked mazes, where the agent initially has a pretty decent run.
+It explores the entire corridor and finds the goal. However, the decision head doesn't become certain enough about the connectivity of the maze
+and therefore doesn't stop the run. After that, the agent aimlessly wanders around, getting stuck in a loop.
 
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=0.25\linewidth]{figures/Results/ComplicatedSolve.png}
 \caption[Handpicked Maze 2]%
-{Solving of a pretty complicated maze}\label{fig:HandpickedMaze2}
+{Solving a pretty complicated maze}\label{fig:HandpickedMaze2}
 \end{figure}
-
+%
 Another interesting example is shown in Figure~\ref{fig:HandpickedMaze2}, where the agent is able to successfully navigate a pretty complicated maze structure.
-However if we slightly modify the maze structure to make the wiggles a bit larger the agent fails to properly make a descision and ends up looping again, as shown in Figure~\ref{fig:HandpickedMaze3}.
-The exploration itself looks solid, but it doesnt reach a certain enough confidence to make the descision to stop.
-Then we can oberve a quite nice backtrack over the path, back to the start but even after that it still cant reach a certain enough confidence to stop the run.
+However, if we slightly modify the maze structure to make the twists a bit larger, the agent fails to properly make a decision and ends up looping again, as shown in Figure~\ref{fig:HandpickedMaze3}.
+The exploration itself looks solid, but it doesn't reach a certain level of confidence to make the decision to stop.
+Then we can observe a quite nice backtrack over the path, back to the start, and see the agent get fairly confident in its (correct) prediction, but even after that, it still doesn't manage to stop the run. 
 
 \begin{figure}[!htbp]
 \centering
@@ -147,68 +147,133 @@ Then we can oberve a quite nice backtrack over the path, back to the start but e
 \end{minipage}
 \caption[Handpicked Maze 3]{Slightly modified to increase wiggle size}\label{fig:HandpickedMaze3}
 \end{figure}
+%
+Also, without showing images of all the examples here, we found that the agent generally struggles with simpler structures, for example, a single line of walls with one gap, that 
+separates the start and goal, or a diagonal wall without any gaps. These structures are very different from the random mazes the agent was trained on, and therefore it struggles to properly
+explore them and make a decision.
 
-Also, without showing images of all the examles here, we found that the agent generally struggles with more simple structures, like for example a single line of walls with one gap, that 
-seperates start and goal or a diagonal wall without any gaps. These structures are are very different from the random mazes the agent was trained on and therefore it struggles to properly
-explore them and make a descision.
+We also found that the more complex the mazes get, the more the starting position matters for the final decision of the agent, as mentioned in Subsection~\ref{subsec:StartingPosition}.
+\subsection{Maze Size Generalization}
 
-We also found that the more complex the mazes get, the more the starting position matters for the final descision of the agent, as mentioned in Subsection~\ref{subsec:StartingPosition}.
+We also tested our model, which was trained on a maze with a grid size of 10$\times$10, on differently sized mazes. 
+We ran tests on both smaller and larger mazes to see how well the agent can generalize to unseen maze sizes\ref{fig:MazeSizeGeneralization}.
 
-%Maybe show different maze sizes here to show generalization?
-\textbf{There will be some results on different maze sizes here to show generalization, aswell as maybe some runs with different hyperparameters}
+\begin{figure}[!htbp]
+	\centering
+	\includegraphics[width=0.6\linewidth]{figures/Results/MazeSizeGeneralization.png}
+	\caption[Maze size generalization]{Accuracy when evaluating the 10$\times$10 model on different maze sizes.}\label{fig:MazeSizeGeneralization}
+\end{figure}
+
+These results don't look that impressive at first, but this model was never trained on anything other than 10$\times$10 mazes, 
+so being able to generalize at all to different sizes, especially the bigger ones, is already quite impressive, since it never learned to step out of the 10$\times$10 grid. 
+Another point that's worth mentioning is that the steps taken are based on the image size, so that means that it also had to adapt to a different step size when changing the maze size.
+
+\subsection{Hyperparameters}
+
+For this section, we unfortunately could not run all of the interesting comparisons due to time constraints, but we did run a test on different loss weights for the auxiliary loss.
+Since that one is not weighted directly but rather weighted through weighting the different components, we adjusted these weights to see how they affect the performance.
+We found that it does have a big impact on the training speed and stability.
+Our best performing model used a weight of $\lambda_{L1}^{steps} = 0.3$ for the individual steps and a final loss weight of $\lambda_{L1}^{final} = 2$, while only using the L1 loss.
+For the maze dataset, we decided to only use L1 loss since this one is localized around our current gaze and therefore does not confuse the agent by punishing 
+reconstruction of a part it never saw. 
+Our comparison model was using a step weight of $\lambda_{L1}^{steps} = 1$ and a final reconstruction weight of $\lambda_{L1}^{final} = 8$.
+As we can see in Figure~\ref{fig:WeightComparison}, the increased reconstruction weight leads to a lot more unstable training and significantly slower convergence.
+Interestingly enough, the model with the higher reconstruction weight even had a higher reconstruction loss throughout the entire training, 
+showing that just increasing the weight of the loss does not necessarily lead to better reconstructions.
+\begin{figure}[!htbp]
+\centering
+\fbox{\includegraphics[width=\linewidth]{figures/Results/WeightComparison.png}}
+{\small RL Loss}
+\centering
+\fbox{\includegraphics[width=\linewidth]{figures/Results/WeightComparisonRec.png}}
+{\small Rec Loss}
+\caption[WeightComparison]{Both rec and rl loss for different weighting schemes (Yellow is the run with lower reconstruction weights)}\label{fig:WeightComparison}
+\end{figure}
+
 
 \section{CNN Classifier comparison}
 
-To have a comparison we also trained a baseline model that was just a simple CNN classifier. 
-For this task a baseline will get almost perfect results for randomly generated mazes as it can easily learn to recognize the goal pattern in the input image.
-If we use similar amounts of parameters for the baseline model as for our gaze-control model 
+To have a comparison, we also trained a baseline model that was just a simple CNN classifier. 
+For this task, a baseline will get almost perfect results for randomly generated mazes, as it can easily learn to recognize the goal pattern in the input image.
+If we use similar amounts of parameters for the baseline model as for our gaze-control model, 
 we can observe an accuracy of over 99.50\%, while the gaze-control model achieves around 96.5\% accuracy.
 
-However this comparison is not entirely fair since the classifier has access to the full image at all times, while our gaze-control model only gets a very limited view of the maze.
+However, this comparison is not entirely fair since the classifier has access to the full image at all times, while our gaze-control model only gets a very limited view of the maze.
 So while we do run into efficiency problems with our model, since it has a lot of parameters and needs multiple steps to explore the maze,
-we use way less information to make the descision. The classifier gets the full mazes of 40$\times$40 pixels, so 1600 pixels in total, while our gaze-control model only gets 3 glimpses scaled to 4$\times$4 pixels each,
-so only 48 pixels in total for each glimpse. So as long as we need less than 33 glimpses (for reference, during validation we averaged below 13 steps per maze) we use less information than the classifier to make a descision.
+we use way less information to make the decision. The classifier gets the full mazes of 40$\times$40 pixels, so 1600 pixels in total, while our gaze-control model only gets 3 glimpses scaled to 4$\times$4 pixels each,
+so only 48 pixels in total for each glimpse. So as long as we need fewer than 33 glimpses (for reference, during validation, we averaged below 13 steps per maze), we use less information than the classifier to make a decision.
 
-%Argue about longer mazes here
-\textbf{There will be stats on the impact of bigger maze sizes here}
+To further analyze the differences between the two models, we also tested both models on sets of mazes with certain minimal paths from start to goal.
+On a set with 1000 mazes that have a minimal path length of 35 steps, the classifier accuracy dropped to around 93\%, while the gaze-control model accuracy dropped to around 75\%.
+When increasing the minimal path length to 40 steps, the classifier accuracy dropped further to around 85\%, while the gaze-control model accuracy only dropped to around 70\%.
+Now, these are not really great results since the gaze-control model is still significantly worse than the classifier; however, we can at least note 
+that the drop in performance for long versus very long mazes affected the gaze-control model less.
+Also what might be interesting but fairly logical is that our false negative to false positive ratio increased tremendously for these long-path mazes,
+for the normal set it was around 2:1, while for the 35 step long-path set it increased to around 27:1.
+Showing that the model struggles more to identify connected mazes when the path is long, which makes sense but is still worth mentioning.
 
-To further dive into comparing capabilities of the models we also tested them on the handpicked mazes from Subsection~\ref{subsec:HandpickedMazes}.
-These mazes are build to highlight the capabilities of both models.
+\begin{figure*}[h]
+\centering
+\setlength{\fboxsep}{0pt}\setlength{\fboxrule}{0.6pt}
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{@{}cccccc@{}}
+\multicolumn{6}{l}{\small \textbf{Positive}} \\
+[0.3ex]
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/pos1.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/pos2.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/pos3.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/pos4.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/pos5.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/pos6.png}} \\
+[0.3ex]
+\multicolumn{6}{l}{\small \textbf{Negative}} \\
+[0.3ex]
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/neg1.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/neg2.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/neg3.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/neg4.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/neg5.png}} &
+\fbox{\includegraphics[width=0.15\linewidth]{figures/Results/table/neg6.png}} \\
+\end{tabular}
+\caption{Positive vs. Negative Examples on misclassified mazes}\label{fig:MisclassifiedMazes}
+\end{figure*}
 
-%Discuss the results on the challenging mazes here
-\textbf{This will also be added}
-
-Lastly we also created a set of mazes that the classifier model fails on, while excluding trivial cases like the start being right next to the goal
+Lastly, we also created a set of mazes that only consists of mazes that the classifier model classifies wrongly, while excluding trivial cases like the start being right next to the goal
 since the classifier for some reason often failed on those.
-Without these the set was composed of pretty difficult and long mazes that required a lot of exploration to find the goal.
-On these mazes the gaze-control model was able to achieve a success rate of around 60\%, showing 
+These mazes are mostly composed of long paths to the finish with lots of twists, making it hard for the classifier to properly identify the connectivity.
+On that dataset the gaze-control model was able to achieve a success rate of around 56\%, showing 
 that it definitely can have an advantage over a simple classifier in certain scenarios, even in fairly simple environments like these mazes.
+In general we observed that the model is often even more starting position dependent on these mazes than on normal ones, as mentioned in Subsection~\ref{subsec:StartingPosition},
+and that the model often doesn't manage to stop on its own, even if it is fairly certain about its prediction.
+In Figure~\ref{fig:MisclassifiedMazes}, we just took the first six mazes of that set that the gaze-control model managed 
+to solve, excluding simple disconnected ones that the classifier failed on since they are not that interesting, and the first six mazes that it failed on, 
+to give an impression of what these mazes look like.
 
 \section{Ablation Studies}
 To better understand the contributions of different components of a model its common to test the model without certain components.
 For our gaze-control model we will always need a certain core structure to be able to perform the task, which includes the encoder,
 the LSTM and the agent, since removing these would defeat the point of the architecture.
 However we can ablate some of the additional components that we added to the model to see how much they contribute to the overall performance.
-\subsection{Decoder}
+We would have liked to also do an ablation study on the fusion layer, however due to time constraints we were not able to get that done.
+
+\subsection{Decoder}\label{subsec:AblationDecoder}
 In particular we tested the model without the decoder branch and therefore without the auxiliary loss.
 
-%insert ablation results here
-\textbf{The results are not fully done yet, they will be added}
-
-Without the auxiliary loss the training progress was significantly slower and reached a lower final performance.
-Surprisingly though the model actually reached a fairly decent performance even without the auxiliary loss,
-showing that the reinforcement learning signal can actually be enough to train the model to a certain degree.
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.65\linewidth]{figures/Results/NoAuxilliary.png}
+\caption[Auxiliary Loss Ablation]%
+{Loss Curve comparison Auxiliary Loss (Yellow is with auxiliary loss)}\label{fig:AuxiliaryAblation}
+\end{figure}
+%
+Without the auxiliary loss the training progress was significantly slower but if trained way longer it could potentially reach similar performance\ref{fig:AuxiliaryAblation}.
+We ran the training for the ablated model twice on the same model, just to see how good we could get it to perform and it turns out that after that much training
+it was able to reach around 92.5\% accuracy on the validation set, which is worse than the full model but still not completely terrible,
+showing that the reinforcement learning signal can be enough to train the model to a certain degree.
 However this is only tested on this fairly simple maze task and that actually makes sense.
 The auxiliary loss helps to stabilize training by helping the lstm memorize what was seen.
 If the task is simple enough the model can get away with just using the reinforcement learning signal to learn a decent exploration strategy.
 
 We expect that on more complex datasets the auxiliary loss will be even more crucial for training since the sparse reinforcement learning signal 
 will most likely not be enough to train the entirety of the model.
-
-\subsection{Fusionlayer}
-The Fusionlayer was meant to basically preprocess the information of the 3 glimpses and the location into a single vector of information
-so that the LSTM is only responsible for memorization. 
-
-This ablation study would have been interesting to see how much the Fusionlayer actually helps with training the model. 
-However due to time constraints we decided against running this experiment since this was also an idea taken from the RAM paper \citep{mnih2014recurrentmodelsvisualattention} and therefore is at least somewhat validated. 
 

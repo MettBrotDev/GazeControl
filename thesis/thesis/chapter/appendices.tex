@@ -1,1 +1,45 @@
-\chapter{Important Additional Stuff}\label{appendix:ias}
+\chapter{Used Hyperparameters}\label{appendix:ias}
+
+Hyperparameters used for training the models on the maze dataset are listed in Table~\ref{tab:hyperparameters}.
+
+\begin{table}[htbp]\centering\small
+\caption{Maze model configuration hyperparameters from `config\_maze.py`.}\label{tab:hyperparameters}
+\begin{tabular}{l l l}
+\hline
+	\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\hline
+IMG\_SIZE & (40, 40) & Input image resolution (H,W) \\
+FOVEA\_OUTPUT\_SIZE & (4, 4) & Glimpse patch size after resizing per scale \\
+FOVEA\_CROP\_SIZE & (4, 4) & Base crop size; larger scales use multiples \\
+K\_SCALES & 3 & Number of multi-scale glimpses per step \\
+HIDDEN\_SIZE & 256 & LSTM hidden/state dimension \\
+POS\_ENCODING\_DIM & 64 & Positional encoding dimension for gaze \\
+LSTM\_LAYERS & 1 & Number of stacked LSTM layers \\
+ENCODER\_C1 & 12 & Channels of first encoder conv block \\
+ENCODER\_C2 & 16 & Channels of second encoder conv block \\
+ENCODER\_OUTPUT\_SIZE & 64 & Flattened encoder feature size (2x2 pooled * C2) \\
+DECODER\_LATENT\_CH & 24 & Latent channels in decoder fusion \\
+FUSION\_TO\_DIM & 128 & Dimension after glimpse fusion MLP \\
+FUSION\_HIDDEN\_MUL & 1.5 & Hidden layer multiplier in fusion MLP \\
+BATCH\_SIZE & 128 & Training batch size \\
+LEARNING\_RATE & 3e-4 & Adam learning rate \\
+WEIGHT\_DECAY & 1e-5 & L2 weight decay \\
+GRAD\_CLIP\_NORM & 1.0 & Global gradient norm clipping threshold \\
+MAX\_STEPS & 45 & Max gaze steps per sample rollout \\
+MAX\_MOVE & 0.1 & Max normalized movement per step (one tile) \\
+MIN\_STEPS\_BEFORE\_STOP & 0 & Minimum steps before STOP allowed \\
+STOP\_CONF\_THRESH & 0.9 & Required class confidence to permit STOP \\
+START\_JITTER & 0.02 & Uniform jitter radius around start gaze \\
+RL\_STOP\_INIT\_BIAS & -8.0 & Initial bias discouraging premature STOP \\
+RL\_STEP\_PENALTY & 0.0025 & Per-step reward penalty encouraging efficiency \\
+RL\_GAMMA & 0.95 & Discount factor for RL returns \\
+RL\_LAMBDA & 0.95 & GAE lambda parameter \\
+RL\_ENTROPY\_COEF & 0.02 & Entropy bonus coefficient \\
+RL\_REWARD\_SCALE & 20.0 & Scale factor for classification reward \\
+RL\_INIT\_STD & 0.2 & Initial action distribution std (if stochastic) \\
+RL\_ONLY\_EPOCHS & 0 & Epochs of RL-only training phase \\
+EPOCHS & 80 & Total supervised training epochs scheduled \\
+DEVICE & cuda/auto & Selected computation device (runtime dependent) \\
+\hline
+\end{tabular}
+\end{table}

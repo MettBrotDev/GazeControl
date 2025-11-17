@@ -1,0 +1,125 @@
+\chapter{Foundations}\label{chapter:foundations}
+
+This chapter provides some foundational background information on the machine learning concepts and techniques that are used throughout this thesis.
+
+\section{Multi Layer Perceptrons (MLPs)}\label{foundation:MLP}
+
+Those are the most basic types of neural networks, consisting of multiple fully connected layers of neurons.
+Each neuron applies a linear transformation followed by a non-linear activation function to its inputs.
+By stacking multiple layers of these neurons, MLPs are able to learn complex non-linear functions, making them able to perform a wide variety of tasks.
+An equation for an MLP with L layers, so L-1 hidden layers + one output layer, can be written as follows:
+\begin{align*}
+    h^{(0)} &= x\\
+    h^{(l)} &= f^{(l)}(W^{(l)} h^{(l-1)} + b^{(l)}) \quad \text{for } l = 1, \ldots, L-1\\
+    y &= W^{(L)} h^{(L-1)} + b^{(L)}
+\end{align*}
+%
+Where:
+\begin{itemize}
+    \item \(x\) is the input vector.
+    \item \(h^{(l)}\) is the output of layer \(l\).
+    \item \(W^{(l)}\) and \(b^{(l)}\) are the weight matrix and bias vector for layer \(l\).
+    \item \(f^{(l)}\) is the activation function for layer \(l\) (e.g., ReLU, Sigmoid, Tanh).
+    \item \(y\) is the final output vector.
+\end{itemize}
+
+\section{Convolutional Neural Networks (CNNs)}\label{foundation:CNN}
+
+CNNs \citep{krizhevsky2012imagenet} are a type of neural network that are particularly well suited for processing grid-like data such as images.
+CNNs have been widely used in computer vision tasks such as image classification, object detection, and segmentation.
+They use convolutional layers that apply a set of learnable filters (kernels) to the input data, allowing them to capture spatial hierarchies and patterns.
+Each of these filters slides over the input image, performing element-wise multiplications and summing the results to produce feature maps of, for example, 
+edges, textures, or shapes. These feature maps are then passed through non-linear activation functions and pooling layers to reduce dimensionality and 
+retain important information.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.65\linewidth]{figures/Foundations/Convolutional-Neural-Networks-1024x611.png}
+\caption[CNN Example]%
+{Convolutional Neural Network example architecture for VGG16 (reproduced from https://learnopencv.com/understanding-convolutional-neural-networks-cnn)}\label{fig:CNNExample}
+\end{figure}
+
+\section{Recurrent Neural Networks (RNNs)}\label{foundation:RNN}
+
+RNNs are a type of neural network designed to handle sequential data by maintaining a hidden state that captures information from previous time steps.
+This hidden state is updated at each time step based on the current input and the previous hidden state. Through that mechanism, RNNs are able to model temporal dependencies in data.
+LSTMs (Long Short-Term Memory) \citep{hochreiter1997long} are a popular variant of RNNs that we will use in this thesis. 
+LSTMs consist of a cell state and three gates (input, forget, and output gates) that regulate the flow of information, 
+allowing them to capture long-term dependencies more effectively than standard RNNs.
+The equations for an LSTM cell can be summarized as follows:
+\begin{align*}
+    f_t &= \sigma(W_f \cdot [h_{t-1}, x_t] + b_f)\\
+    i_t &= \sigma(W_i \cdot [h_{t-1}, x_t] + b_i) \\
+    \tilde{C}_t &= \tanh(W_C \cdot [h_{t-1}, x _t] + b_C) \\
+    C_t &= f_t * C_{t-1} + i_t * \tilde{C}_t \\
+    o_t &= \sigma(W_o \cdot [h_{t-1}, x_t] + b_o) \\
+    h_t &= o_t * \tanh(C_t)
+\end{align*}
+Where:
+\begin{itemize}
+    \item \(x_t\) is the input at time step \(t\).
+    \item \(h_{t-1}\) is the hidden state from the previous time step.
+    \item \(C_{t-1}\) is the cell state from the previous time step.
+    \item \(f_t\), \(i_t\), and \(o_t\) are the forget (later introduced\Citep{gers2000learning}), input, and output gates, respectively.
+    \item \(\tilde{C}_t\) is the candidate cell state.
+    \item \(C_t\) is the updated cell state.
+    \item \(h_t\) is the updated hidden state.
+    \item \(W_f\), \(W_i\), \(W_C\), and \(W_o\) are weight matrices.
+    \item \(b_f\), \(b_i\), \(b_C\), and \(b_o\) are bias vectors.
+    \item \(\sigma\) is the sigmoid activation function.
+    \item \(*\) denotes element-wise multiplication.
+\end{itemize}
+
+
+\section{Reinforcement Learning (RL)}\label{foundation:RL}
+Reinforcement Learning  is a type of machine learning where an agent learns to make decisions by interacting with an environment.
+The agent receives observations from the environment and takes actions based on those observations.
+In contrast to all the other mentioned techniques, RL does not rely on labeled data, but instead learns from feedback in the form of rewards, since for many tasks, there is no clear ground truth available.
+The agent will get rewarded based on the outcome of its actions, and the goal of the agent is to learn a policy that maximizes the cumulative reward over time.
+This reward could, for example, be a +1 for successfully completing a task and a 0 for failing it.
+
+For this thesis, we will use Generalized Advantage Estimation (GAE) \Citep{schulman2018highdimensionalcontinuouscontrolusing} to train the agent.
+In short, GAE estimates how much better an action was than the average by smoothly combining short- and long-term reward signals, reducing noise and making learning more stable.
+Simplified, the advantage function \(A(v, r)\) for one run is computed as follows:
+\begin{align*}
+    for t = 0 \ldots T-1&: \\
+    \delta &= r(t) + \gamma V(t+1) - V(s_t) \\
+    gae &= \delta + \gamma \lambda gae \\
+    A(t) &= gae
+\end{align*}
+Where:
+\begin{itemize}
+    \item \(r(t)\) is the reward received at time step \(t\).
+    \item \(V(s_t)\) is the estimated value of state \(s_t\).
+    \item \(\gamma\) is the discount factor, determining the importance of future rewards.
+    \item \(\lambda\) is a smoothing parameter that balances bias and variance in the advantage estimates.
+\end{itemize}
+
+We combine this with Advantage Actor-Critic (A2C) \Citep{mnih2016asynchronousmethodsdeepreinforcement}, which is a policy gradient method that uses two neural networks: 
+an actor network that learns the policy (mapping from states to actions) and a critic network that estimates the value function (expected cumulative reward from a state).
+For an update we then compute the losses as follows:
+\begin{align*}
+    L_{policy} &= -mean(p_{\log} A(t)) \\
+    L_{value} &= MSE(V(s_t), R_t)\\
+    L_{entropy} &= -mean(entropies) \\
+    L_{total} &= L_{policy} + c_1 L_{value} - c_2 L_{entropy}
+\end{align*}
+Where:
+\begin{itemize}
+    \item \(p_{\log}\) is the log probability of the taken actions.
+    \item \(A(t)\) is the advantage estimate from GAE.
+    \item \(V(s_t)\) is the estimated value of state \(s_t\).
+    \item \(R_t\) is the actual return (cumulative reward) from time step \(t\).
+    \item \(entropies\) is the entropy of the policy distribution, encouraging exploration.
+    \item \(c_1\) and \(c_2\) are coefficients that balance the contributions of the value loss and entropy bonus.
+\end{itemize}
+
+\section{Autoencoders}\label{foundation:Autoenc}
+Autoencoders \citep{hinton2006reducingdimensionalitydataneural} are a type of neural network used for unsupervised learning of efficient encodings.
+They consist of two main components: an encoder that compresses the input data into a lower-dimensional representation (latent space), and a decoder that reconstructs the original data from this compressed representation.
+Autoencoders are commonly used for dimensionality reduction, feature learning, and data denoising.
+
+\section{Positional Encoding}\label{foundation:PosEnc}
+Positional encoding is a technique used to inject information about the position of something into a model in a way that the model can understand.
+The general idea is to transform the position into a higher-dimensional space using a set of basis functions. This will allow the model to learn to interpret the position information more effectively.
+We will use sinusoidal positional encoding \citep{vaswani2023attentionneed} in this thesis, which uses sine and cosine functions of different frequencies to encode the position.

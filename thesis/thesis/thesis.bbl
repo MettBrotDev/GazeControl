@@ -1,10 +1,25 @@
 \begin{thebibliography}{}
 
+\bibitem[Buşoniu {\em et~al.}(2018)Buşoniu, {de Bruin}, Tolić, Kober, and Palunko]{BUSONIU20188}
+Buşoniu, L., {de Bruin}, T., Tolić, D., Kober, J., and Palunko, I. (2018).
+\newblock Reinforcement learning for control: Performance, stability, and deep approximators.
+\newblock {\em Annual Reviews in Control\/}, {\normalfont\bfseries 46}, 8--28.
+
 \bibitem[drewlinsley(2019)drewlinsley]{pathfinder2019github}
 drewlinsley (2019).
 \newblock Pathfinder.
 \newblock \url{https://github.com/drewlinsley/pathfinder}.
 \newblock Accessed: 2025-11-07.
+
+\bibitem[Gers {\em et~al.}(2000)Gers, Schmidhuber, and Cummins]{gers2000learning}
+Gers, F.~A., Schmidhuber, J., and Cummins, F. (2000).
+\newblock Learning to forget: Continual prediction with lstm.
+\newblock {\em Neural Computation\/}, {\normalfont\bfseries 12}(10), 2451--2471.
+
+\bibitem[Hinton and Salakhutdinov(2006)Hinton and Salakhutdinov]{hinton2006reducingdimensionalitydataneural}
+Hinton, G.~E. and Salakhutdinov, R.~R. (2006).
+\newblock Reducing the dimensionality of data with neural networks.
+\newblock {\em Science\/}, {\normalfont\bfseries 313}(5786), 504--507.
 
 \bibitem[Hochreiter and Schmidhuber(1997)Hochreiter and Schmidhuber]{hochreiter1997long}
 Hochreiter, S. and Schmidhuber, J. (1997).
@@ -14,6 +29,11 @@ Hochreiter, S. and Schmidhuber, J. (1997).
 \bibitem[Jaderberg {\em et~al.}(2016)Jaderberg, Mnih, Czarnecki, Schaul, Leibo, Silver, and Kavukcuoglu]{jaderberg2016reinforcementlearningunsupervisedauxiliary}
 Jaderberg, M., Mnih, V., Czarnecki, W.~M., Schaul, T., Leibo, J.~Z., Silver, D., and Kavukcuoglu, K. (2016).
 \newblock Reinforcement learning with unsupervised auxiliary tasks.
+
+\bibitem[Krizhevsky {\em et~al.}(2012)Krizhevsky, Sutskever, and Hinton]{krizhevsky2012imagenet}
+Krizhevsky, A., Sutskever, I., and Hinton, G.~E. (2012).
+\newblock Imagenet classification with deep convolutional neural networks.
+\newblock In {\em Advances in Neural Information Processing Systems (NeurIPS) 25\/}.
 
 \bibitem[Mathieu {\em et~al.}(2016)Mathieu, Couprie, and LeCun]{mathieu2016deepmultiscalevideoprediction}
 Mathieu, M., Couprie, C., and LeCun, Y. (2016).
@@ -46,6 +66,10 @@ Shang, J. and Ryoo, M.~S. (2023).
 \bibitem[Tay {\em et~al.}(2020)Tay, Dehghani, Abnar, Shen, Bahri, Pham, Rao, Yang, Ruder, and Metzler]{tay2020longrangearenabenchmark}
 Tay, Y., Dehghani, M., Abnar, S., Shen, Y., Bahri, D., Pham, P., Rao, J., Yang, L., Ruder, S., and Metzler, D. (2020).
 \newblock Long range arena: A benchmark for efficient transformers.
+
+\bibitem[Vaswani {\em et~al.}(2023)Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, and Polosukhin]{vaswani2023attentionneed}
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.~N., Kaiser, L., and Polosukhin, I. (2023).
+\newblock Attention is all you need.
 
 \bibitem[Wang {\em et~al.}(2004)Wang, Bovik, Sheikh, and Simoncelli]{1284395}
 Wang, Z., Bovik, A., Sheikh, H., and Simoncelli, E. (2004).

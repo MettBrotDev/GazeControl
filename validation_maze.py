@@ -16,6 +16,8 @@ import argparse
 import importlib
 import json
 import glob
+import random
+import numpy as np
 
 from models import GazeControlModel, Agent
 from config import Config
@@ -165,6 +167,19 @@ def validate(
     model_path: str | None = None,
     data_root: str | None = None,
 ):
+    # Deterministic setup
+    seed = int(getattr(Config, 'SEED', 0))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except Exception:
+        pass
     # Setup transforms (match training range [-1,1])
     transform_img = transforms.Compose([
         transforms.Resize(Config.IMG_SIZE),
@@ -225,10 +240,16 @@ def validate(
             print(f"Error: Could not load model weights: {e2}")
     model.eval(); agent.eval()
 
-    # Only compute classification accuracy (mirror train_maze rollout, but greedy actions)
+    # Metrics: accuracy, confusion counts, and avg steps (mirror train_maze rollout)
     correct = 0
     total = 0
     steps_total = 0  # sum of steps taken per sample (1-based)
+    tp = 0
+    tn = 0
+    fp = 0
+    fn = 0
+    pos_total = 0
+    neg_total = 0
 
     # Progress helpers
     total_batches = len(loader)
@@ -256,21 +277,14 @@ def validate(
             B = image.size(0)
             # Init gaze
             if starts_xy is not None:
-                base = starts_xy.to(Config.DEVICE)
-                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
-                if jitter_r > 0.0:
-                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
-                    base = base + jitter
-                gaze = base.clamp(0.0, 1.0)
+                # Use provided start exactly (clamped) for determinism
+                gaze = starts_xy.to(Config.DEVICE).clamp(0.0, 1.0)
             elif hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
-                base = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1)
-                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
-                if jitter_r > 0.0:
-                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
-                    base = base + jitter
-                gaze = base.clamp(0.0, 1.0)
+                # Use configured fixed start gaze
+                gaze = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1).clamp(0.0, 1.0)
             else:
-                gaze = torch.rand(B, 2, device=Config.DEVICE) * 0.4 + 0.3
+                # Fallback: deterministic center
+                gaze = torch.full((B, 2), 0.5, device=Config.DEVICE)
 
             # RNN state
             state = model.init_memory(B, Config.DEVICE)
@@ -351,6 +365,16 @@ def validate(
             # Accumulate steps (convert 0-based last_step to 1-based count)
             steps_total += int((last_step + 1).sum().item())
 
+            # Update confusion counts
+            pos_mask = (labels == 1)
+            neg_mask = (labels == 0)
+            pos_total += int(pos_mask.sum().item())
+            neg_total += int(neg_mask.sum().item())
+            tp += int(((preds == 1) & pos_mask).sum().item())
+            fn += int(((preds == 0) & pos_mask).sum().item())
+            fp += int(((preds == 1) & neg_mask).sum().item())
+            tn += int(((preds == 0) & neg_mask).sum().item())
+
             # Progress print (single line updated in-place)
             elapsed = time.perf_counter() - start_ts
             progress = bidx / max(1, total_batches)
@@ -373,10 +397,21 @@ def validate(
     print()
     acc = 100.0 * correct / max(1, total)
     avg_steps = float(steps_total) / max(1, total)
+    # Compute rates
+    fn_rate = (float(fn) / float(pos_total)) if pos_total > 0 else 0.0
+    fp_rate = (float(fp) / float(neg_total)) if neg_total > 0 else 0.0
+    tn_rate = (float(tn) / float(neg_total)) if neg_total > 0 else 0.0
+    tp_rate = (float(tp) / float(pos_total)) if pos_total > 0 else 0.0
     total_elapsed = time.perf_counter() - start_ts
     print(
-        f"Validation complete: split={split}, accuracy={acc:.2f}% "
-        f"({correct}/{total}), avg_steps={avg_steps:.2f} in {fmt_secs(total_elapsed)}"
+        f"Validation complete: split={split}\n"
+        f"- accuracy: {acc:.2f}% ({correct}/{total})\n"
+        f"- avg_steps: {avg_steps:.2f} in {fmt_secs(total_elapsed)}\n"
+        f"- positives: {pos_total}, negatives: {neg_total}\n"
+        f"- false negative rate: {fn_rate:.4f} ({fn}/{pos_total})\n"
+        f"- false positive rate: {fp_rate:.4f} ({fp}/{neg_total})\n"
+        f"- true positive rate: {tp_rate:.4f} ({tp}/{pos_total})\n"
+        f"- true negative rate: {tn_rate:.4f} ({tn}/{neg_total})"
     )
 
     return acc

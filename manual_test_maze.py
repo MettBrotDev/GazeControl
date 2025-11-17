@@ -152,6 +152,8 @@ class MazeManualTestGUI:
 		self.baseline_model_var = tk.StringVar(value='MazeCNNClassifier')
 		self.baseline_chkpt_var = tk.StringVar(value='')
 		self.baseline_result = None
+		self.baseline_last_pred = None  # 0/1
+		self.baseline_last_prob = None  # probability for class 1 (connected)
 
 		# GUI layout
 		self._build_gui()
@@ -278,6 +280,8 @@ class MazeManualTestGUI:
 				logit = float(logits.item())
 				pred = int(prob >= 0.5)
 			self.baseline_result = f"Baseline: prob={prob:.3f} pred={pred} logit={logit:.3f}"
+			self.baseline_last_pred = int(pred)
+			self.baseline_last_prob = float(prob)
 			self.baseline_status.config(text=self.baseline_result)
 		except Exception as e:
 			self.baseline_status.config(text=f"Error: {e}")
@@ -311,6 +315,9 @@ class MazeManualTestGUI:
 		self.last_probs = None
 		self.last_rec = None
 		self.last_patches = None
+		# reset baseline cache for this image
+		self.baseline_last_pred = None
+		self.baseline_last_prob = None
 
 	def _policy_step(self):
 		# Build patches like training; also keep raw (un-resized) patches for overlay and size checks
@@ -411,26 +418,32 @@ class MazeManualTestGUI:
 		self.axs[0, 0].scatter([cx], [cy], c='lime', s=60, marker='o')
 		self.axs[0, 0].set_title('Original + path (x) and current (o)')
 
-		# Overlay decision/confidence directly on the maze for easy screenshots
-		overlay_txt = None
-		overlay_color = 'white'
-		if self.last_probs is not None:
-			dec = self.last_probs.get('decision_probs')
-			if dec is not None and len(dec) >= 2:
-				pred_idx = int(1 if dec[1] >= dec[0] else 0)
-				conf = float(max(dec))
-				pred_name = 'Connected' if pred_idx == 1 else 'Not connected'
-				status = 'Final' if self.stopped else 'Current'
-				overlay_txt = f"{status} decision: {pred_name} (p={conf:.2f})\nsteps={self.step}"
-				overlay_color = '#00ff6a' if pred_idx == 1 else '#ff5252'
-		# Draw overlay box in axes coordinates (top-left)
-		if overlay_txt:
+		# Overlay concise decisions and confidences on the image (top-left)
+		def _lbl_str(y):
+			return 'Connected' if int(y) == 1 else 'Not connected'
+		overlay_lines = []
+		# Model decision/confidence from last_probs (decision_probs of length 2)
+		if self.last_probs is not None and 'decision_probs' in self.last_probs:
+			dec = self.last_probs['decision_probs']
+			if isinstance(dec, (list, tuple)) and len(dec) == 2:
+				if dec[1] >= dec[0]:
+					m_pred = 1; m_prob = float(dec[1])
+				else:
+					m_pred = 0; m_prob = float(dec[0])
+				overlay_lines.append(f"Model: {_lbl_str(m_pred)} ({m_prob:.2f})")
+		# Baseline CNN decision/confidence if available
+		if self.baseline_last_pred is not None and self.baseline_last_prob is not None:
+			b_pred = int(self.baseline_last_pred)
+			p_pos = float(self.baseline_last_prob)
+			b_prob_decision = p_pos if b_pred == 1 else (1.0 - p_pos)
+			overlay_lines.append(f"CNN: {_lbl_str(b_pred)} ({b_prob_decision:.2f})")
+		if overlay_lines:
 			self.axs[0, 0].text(
-				0.01, 0.01, overlay_txt,
+				0.01, 0.01, "\n".join(overlay_lines),
 				transform=self.axs[0, 0].transAxes,
 				va='bottom', ha='left',
 				fontsize=11, color='white',
-				bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.4', edgecolor='none')
+				bbox=dict(facecolor='black', alpha=0.55, boxstyle='round,pad=0.4', edgecolor='none')
 			)
 
 		# b) Inputs overlay (largest->smallest)
@@ -631,6 +644,8 @@ class MazeManualTestGUI:
 		self.last_probs = None
 		self.last_rec = None
 		self.last_patches = None
+		self.baseline_last_pred = None
+		self.baseline_last_prob = None
 		self._draw()
 
 	def on_next_image(self):
