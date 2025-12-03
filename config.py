@@ -1,94 +1,109 @@
 class Config:
-    IMG_SIZE = (32, 32)                # Target image size for training images
-    FOVEA_OUTPUT_SIZE = (9, 9)         # All scales are resized to 9x9 for the encoder
-    FOVEA_CROP_SIZE = (6, 6)           # Base crop size around gaze; multi-scale uses 6,12,24
+    # Snakes images are 128x128
+    IMG_SIZE = (128, 128)
+    # Slightly larger fovea for thin lines; multi-scale uses 16, 32, 64
+    FOVEA_OUTPUT_SIZE = (16, 16)
+    FOVEA_CROP_SIZE = (16, 16)
     EPOCHS = 200
 
-    # Training hyperparameters
+    # Training hyperparameters (snakes, 128x128)
     LEARNING_RATE = 3e-4
-    WEIGHT_DECAY = 1e-4
+    WEIGHT_DECAY = 1e-5
     GRAD_CLIP_NORM = 1.0
-    BATCH_SIZE = 64                    # Use batching now
-    HIDDEN_SIZE = 768                  # LSTM hidden size (matches autoencoder latent)
-    ENCODER_OUTPUT_SIZE = 192          # Patch encoder output: 48*2*2 = 192 for 16x16 patch
-    POS_ENCODING_DIM = 64              # Positional encoding size
-    LSTM_LAYERS = 1                    # LSTM layers
+    BATCH_SIZE = 64
 
-    # Multi-scale glimpse settings
-    K_SCALES = 3                       # number of scales: sizes base*(2**i)
-    FUSION_TO_DIM = 256                # None to keep at k*E + pos + 2
-    FUSION_HIDDEN_MUL = 2.0            # width multiplier for FusionMLP hidden layer
+    # Model dims (tuned for 128×128 snakes)
+    HIDDEN_SIZE = 768          # LSTM hidden/state size
+    ENCODER_C1 = 32            # encoder channels stage 1
+    ENCODER_C2 = 64            # encoder channels stage 2
+    ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # 2x2 pooled features
+    POS_ENCODING_DIM = 64
+    LSTM_LAYERS = 1
 
-    # Decoder capacity and options
-    DECODER_LATENT_CH = 96             
+    # Multi-scale glimpses
+    K_SCALES = 3                   # three scales work well at 128px
+    FUSION_TO_DIM = 256
+    FUSION_HIDDEN_MUL = 1.5
+
+    # Decoder
+    DECODER_LATENT_CH = 48
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
-    # LOCAL_DATA_DIR can be a string or list of strings
-    LOCAL_DATA_DIR = [
-        "./Data/Pathfinder/curv_baseline/imgs",
-        "./Data/Pathfinder/curv_contour_length_9/imgs",
-        "./Data/Pathfinder/curv_contour_length_14/imgs",
-    ]
+
+    # Data roots
+    MAZE_ROOT = "./Data/Maze10Random35"
+    SNAKES_ROOT = "./Data/Snakes128"
+    LOCAL_DATA_DIR = [SNAKES_ROOT]
+    SNAKES_VAL_FRAC = 0.1  # train/val split for SnakesDataset
     MNIST_DATA_DIR = "./Data/mnist"
     CIFAR100_DATA_DIR = "./Data/cifar100"
 
-    # Rollout (fixed 12 coverage positions)
-    MAX_STEPS = 20
-    MAX_MOVE = 0.2
+    # Rollout
+    MAX_STEPS = 45
+    MAX_MOVE = 0.1  # max gaze move per step (one tile)
+    MIN_STEPS_BEFORE_STOP = 15
+    STOP_CONF_THRESH = 0.92  
+    USE_GAZE_BOUNDS = True   # keep gaze safely within image for snakes
+    GAZE_BOUND_FRACTION = 0.02
 
-    # Gaze movement bounds (keep gaze inside the central region to improve coverage)
-    USE_GAZE_BOUNDS = True
-    GAZE_BOUND_FRACTION = 0.1
-
-
-    # Reconstruction loss weights (L1 dominant)
-    MSE_WEIGHT = 0.1
+    # Reconstruction losses (L1-dominant). SSIM off for tiny images.
     L1_WEIGHT = 1.0
+    PERC_WEIGHT = 0.0                
+    SSIM_WEIGHT = 0.0
+    GDL_WEIGHT = 0.0                # Useful for sharp edges in mazes
 
     # Step loss schedule and masking
-    USE_MASKED_STEP_LOSS = True        # Use a local mask around the current gaze for additional step losses
-    STEP_LOSS_MIN = 0.02               # starting weight at step 1
-    STEP_LOSS_MAX = 0.35                # ending weight at final step
-    FINAL_LOSS_MULT = 8.0              # multiplier for final full-frame loss
-    STEP_MASK_SIGMA_SCALE = 0.35       # scale the Gaussian sigma vs. patch size (smaller -> tighter)
+    USE_MASKED_STEP_LOSS = True
+    STEP_LOSS_MIN = 0.05
+    STEP_LOSS_MAX = 0.5
+    FINAL_LOSS_MULT = 8.0
+    STEP_MASK_SIGMA_SCALE = 0.5
+    # restrict final loss to regions the agent actually observed
+    USE_FINAL_VISIBILITY_MASK = True
+    # If not set, falls back to STEP_MASK_SIGMA_SCALE
+    FINAL_MASK_SIGMA_SCALE = 0.5
 
-    # Decoder Pretraining options (separate script uses these)
-    PRETRAIN_STEPS = 40000          # total optimization steps
-    PRETRAIN_LR = 3e-3             
-    PRETRAIN_BATCH_SIZE = 32       
-    FREEZE_DECODER_EPOCHS = 1      # freeze decoder for first epoch during main training
-    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder.pth"  # Path to pretrained decoder weights
-    PRETRAIN_L1_WEIGHT = 1.0        # Try L1-only for extra sharpness
+    # Decoder Pretraining (if desired on Maze itself)
+    PRETRAIN_STEPS = 15000
+    PRETRAIN_LR = 3e-3
+    PRETRAIN_BATCH_SIZE = 64
+    FREEZE_DECODER_EPOCHS = 1
+    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder.pth"
+    PRETRAIN_L1_WEIGHT = 1.0
     PRETRAIN_MSE_WEIGHT = 0.0
-    PRETRAIN_USE_AMP = True         # Mixed precision for faster/more stable pretraining
-    # Perceptual loss weight used only during decoder pretraining
-    PRETRAIN_PERC_WEIGHT = 0.005
+    PRETRAIN_USE_AMP = True
+    PRETRAIN_PERC_WEIGHT = 0.01
+    PRETRAIN_SSIM_WEIGHT = 0.0
 
-    # Full-model checkpoint (e.g., a "random move" trained model)
-    # If set to a valid path, training will load this entire state_dict first (strict=False),
-    # then optionally override decoder with PRETRAINED_DECODER_PATH if requested.
-    PRETRAINED_MODEL_PATH = "./PastRuns/rnd_10M.pth"      # e.g., "./PastRuns/WorkingIshModel0628.pth" or empty to disable
+    PRETRAINED_MODEL_PATH = ""  # not used
+    # Warm-start for RL: set this to your recon-only checkpoint (e.g., gaze_control_model_local.pth)
+    PRETRAINED_MODEL_PATH = "gaze_control_model_local.pth"
 
-    # Data source
-    DATA_SOURCE = "cifar100"          # "local", "mnist", or "cifar100"
+    # Select which dataset the main train.py uses: 'maze' or 'snakes'
+    DATA_SOURCE = "snakes"
 
-    # RL settings (actor-critic on top of LSTM hidden state)
+    # RL (defaults; not critical if you train supervised only)
     RL_GAMMA = 0.95
-    RL_LAMBDA = 0.95                 # for GAE advantage
+    RL_LAMBDA = 0.95
     RL_POLICY_LR = 3e-4
     RL_VALUE_COEF = 0.5
     RL_ENTROPY_COEF = 0.02
-    RL_LOSS_WEIGHT = 1.0             # scales the RL loss added to supervised loss
-    RL_CLIP_ACTION = True            # clip delta to [-MAX_MOVE, MAX_MOVE] (useless in discrete case)
-    RL_INIT_STD = 0.2                # initial std for Gaussian policy (in unscaled delta units)
-    RL_REWARD_SCALE = 50.0          # multiply per-step rewards to strengthen signal
-    RL_NORM_ADV = True               # normalize advantages to zero-mean, unit-std
+    RL_LOSS_WEIGHT = 1.0
+    RL_CLIP_ACTION = True
+    RL_INIT_STD = 0.2
+    RL_REWARD_SCALE = 20.0
+    RL_NORM_ADV = True
+    RL_STOP_INIT_BIAS = -8.0      # stronger negative initialization for stop action
+    # Small per-step time penalty to encourage stopping early when useful
+    RL_STEP_PENALTY = 0.001 #maybe lower it to 0.005 for next training
 
-    # Train RL first: freeze backbone
-    RL_ONLY_EPOCHS = 3
+    RL_ONLY_EPOCHS = 0
+
+    # Initial gaze position control (used only if dataset doesn't provide one)
+    START_GAZE = (0.5, 0.5)    # center spawn for snakes
+    START_JITTER = 0.0         # fixed center
 
     @classmethod
     def get_local_data_dirs(cls):
-        """Returns LOCAL_DATA_DIR as a list, converting single string if needed."""
         if isinstance(cls.LOCAL_DATA_DIR, str):
             return [cls.LOCAL_DATA_DIR]
         return cls.LOCAL_DATA_DIR

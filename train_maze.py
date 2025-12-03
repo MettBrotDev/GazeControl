@@ -540,6 +540,12 @@ def train(
                     min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
                     if step < min(min_steps, num_steps) - 1:
                         stop_sample = torch.zeros_like(stop_sample)
+                    # Confidence gating: only allow STOP if classifier confidence >= threshold
+                    conf_thresh = float(getattr(Config, 'STOP_CONF_THRESH', 0.9))
+                    if conf_thresh is not None and conf_thresh > 0.0:
+                        with torch.no_grad():
+                            conf = torch.softmax(decision_logits_step, dim=1).amax(dim=1)
+                        stop_sample = torch.where(conf >= conf_thresh, stop_sample, torch.zeros_like(stop_sample))
                     stop_lp = stop_dist.log_prob(stop_sample)  # (B,)
                     # Compose joint logprob and entropy (approximate add)
                     logprob = move_lp + stop_lp
@@ -723,7 +729,7 @@ def train(
                 # Additional penalty for not executing all steps if final decision is wrong
                 # This is scaled super high to strongly encourage running to full length when unsure
                 incorrect = (preds != labels).float()
-                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 50
+                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 200
                 rewards_t[ls_clamped, batch_arange] = rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
 
                 with torch.no_grad():

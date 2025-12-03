@@ -68,18 +68,19 @@ class DecoderCNN(nn.Module):
         super().__init__()
         self.out_h, self.out_w = out_size
 
-        c1 = int(latent_ch)
-        c2 = max(16, c1 // 2)
-        c3 = max(16, c2 // 2)
-        c4 = max(8, c3 // 2)
+        c1 = max(48, int(latent_ch))
+        c2 = max(32, c1 // 2)
+        c3 = max(32, c2 // 2)
+        c4 = max(16, c3 // 2)
+        c5 = max(16, c4 // 2)
 
-        # Project latent to 4x4 feature map
-        self.fc = nn.Linear(state_size, 128 * 4 * 4)
-        self.unflatten = nn.Unflatten(1, (128, 4, 4))
+        # Project latent to 4x4 feature map (wider for more capacity)
+        self.fc = nn.Linear(state_size, 256 * 4 * 4)
+        self.unflatten = nn.Unflatten(1, (256, 4, 4))
 
         # 4x4 -> 8x8
         self.up1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.conv1 = nn.Conv2d(128, c1, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(256, c1, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(c1) if c1 >= 16 else nn.GroupNorm(max(1, min(4, c1)), c1)
         self.act1 = nn.LeakyReLU(inplace=True)
 
@@ -101,8 +102,20 @@ class DecoderCNN(nn.Module):
         self.bn4 = nn.BatchNorm2d(c4) if c4 >= 16 else nn.GroupNorm(max(1, min(4, c4)), c4)
         self.act4 = nn.LeakyReLU(inplace=True)
 
-    # final RGB conv (64x64)
-        self.conv_out = nn.Conv2d(c4, 3, kernel_size=3, padding=1)
+        # NEW: 64x64 -> 128x128 extra capacity block
+        self.up5 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.conv5 = nn.Conv2d(c4, c5, kernel_size=3, padding=1)
+        self.bn5 = nn.BatchNorm2d(c5) if c5 >= 16 else nn.GroupNorm(max(1, min(4, c5)), c5)
+        self.act5 = nn.LeakyReLU(inplace=True)
+
+        # Extra refinement at full resolution
+        self.refine = nn.Sequential(
+            nn.Conv2d(c5, c5, kernel_size=3, padding=1),
+            nn.BatchNorm2d(c5) if c5 >= 16 else nn.GroupNorm(max(1, min(4, c5)), c5),
+            nn.LeakyReLU(inplace=True),
+        )
+        # final RGB conv (now operating at higher spatial resolution)
+        self.conv_out = nn.Conv2d(c5, 3, kernel_size=3, padding=1)
 
 
 
@@ -115,6 +128,8 @@ class DecoderCNN(nn.Module):
         x = self.up2(x); x = self.conv2(x); x = self.bn2(x); x = self.act2(x)
         x = self.up3(x); x = self.conv3(x); x = self.bn3(x); x = self.act3(x)
         x = self.up4(x); x = self.conv4(x); x = self.bn4(x); x = self.act4(x)
+        x = self.up5(x); x = self.conv5(x); x = self.bn5(x); x = self.act5(x)
+        x = self.refine(x)
         x = self.conv_out(x)
         x = torch.tanh(x)
         if x.shape[-2] != self.out_h or x.shape[-1] != self.out_w:
@@ -281,7 +296,7 @@ class ImageEncoderForPretrain(nn.Module):
     def __init__(self, state_size: int, img_size=(32, 32)):
         super().__init__()
         # Wider channels for better feature extraction on sparse images
-        c1, c2, c3, c4 = 128, 256, 256, 192
+        c1, c2, c3, c4 = 128, 128, 128, 192
         self.features = nn.Sequential(
             # 200×200 → 100×100
             nn.Conv2d(3, c1, 3, stride=2, padding=1), 

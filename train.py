@@ -23,10 +23,11 @@ from PIL import Image
 import math
 import argparse
 import importlib
+import json
 from torch.distributions import Categorical
 import matplotlib.pyplot as plt
 
-from models import GazeControlModel, Agent, PerceptualLoss
+from models import GazeControlModel, Agent, PerceptualLoss, GradientDifferenceLoss
 from config import Config          
 
 def clear_memory():
@@ -122,7 +123,134 @@ def eight_dir_deltas(max_move: float, device: str):
     return dirs * max_move
 
 
-def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=None):
+class MazeDataset(Dataset):
+    """Maze dataset that reads images and labels from generated metadata JSON."""
+    def __init__(self, root_dir: str, split: str = 'train', transform=None):
+        super().__init__()
+        self.root = root_dir
+        self.split = split
+        self.transform = transform
+        self.img_dir = os.path.join(root_dir, 'imgs', split)
+        self.meta_path = os.path.join(root_dir, f'{split}_metadata.json')
+        with open(self.meta_path, 'r') as f:
+            self.meta = json.load(f)
+        # Keep full entries so we can access start/end if present
+        self.samples = self.meta
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        entry = self.samples[idx]
+        fname = entry['filename']
+        label = int(entry['label'])
+        p = os.path.join(self.img_dir, fname)
+        
+        # Load image
+        img_pil = Image.open(p).convert('RGB')
+
+        # Just take gridsize like this for now
+        self.grid_size = Config.IMG_SIZE[0] // 4
+
+        # Compute start gaze from metadata grid coordinate
+        sx = sy = None
+        if isinstance(entry.get('start'), dict):
+            try:
+                sx = int(entry['start'].get('x'))
+                sy = int(entry['start'].get('y'))
+            except Exception:
+                sx = sy = None
+        if sx is not None and sy is not None:
+            nx = (float(sx) + 0.5) / float(self.grid_size)
+            ny = (float(sy) + 0.5) / float(self.grid_size)
+            start_xy = torch.tensor([nx, ny], dtype=torch.float32)
+        else:
+            # Fallback: center if metadata is missing
+            start_xy = torch.tensor([0.5, 0.5], dtype=torch.float32)
+
+        # Apply transforms to image
+        img = self.transform(img_pil) if self.transform else img_pil
+
+        return img, torch.tensor(label, dtype=torch.long), start_xy
+
+
+class SnakesDataset(Dataset):
+    """Snakes2 dataset loader.
+    Expects `root_dir` containing `imgs/<batch_id>/sample_*.png` and `metadata/<batch_id>.npy`.
+    Uses labels from metadata and spawns gaze at the image center (no spawnpoint available).
+    Splits train/val deterministically with a fixed fraction.
+    """
+    def __init__(self, root_dir: str, split: str = 'train', transform=None, val_frac: float = 0.1, seed: int = 1337):
+        super().__init__()
+        self.root = root_dir
+        self.split = split
+        self.transform = transform
+        self.val_frac = float(val_frac)
+        self.seed = int(seed)
+
+        # Load all metadata rows from npy files
+        meta_dir = os.path.join(root_dir, 'metadata')
+        rows = []
+        if os.path.isdir(meta_dir):
+            for fn in sorted(os.listdir(meta_dir)):
+                if not fn.lower().endswith('.npy'):
+                    continue
+                try:
+                    arr = np.load(os.path.join(meta_dir, fn), allow_pickle=True)
+                    # rows: [subpath, filename, nimg, label, ...]
+                    for r in arr:
+                        try:
+                            subpath, filename, _, label = r[0], r[1], r[2], int(r[3])
+                            img_path = os.path.join(root_dir, subpath, filename)
+                            rows.append((img_path, label))
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+        # Fallback: scan imgs/ if metadata missing (label=0)
+        if not rows:
+            img_root = os.path.join(root_dir, 'imgs')
+            for dp, _, files in os.walk(img_root):
+                for f in files:
+                    if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                        rows.append((os.path.join(dp, f), 0))
+
+        # Filter to existing files
+        rows = [(p, lbl) for (p, lbl) in rows if os.path.exists(p)]
+        # Deterministic split
+        rng = np.random.RandomState(self.seed)
+        idx = np.arange(len(rows))
+        rng.shuffle(idx)
+        split_at = int(round((1.0 - self.val_frac) * len(rows)))
+        if split == 'train':
+            take = idx[:split_at]
+        else:
+            take = idx[split_at:]
+        self.samples = [rows[i] for i in take]
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        p, label = self.samples[idx]
+        try:
+            img_pil = Image.open(p).convert('RGB')
+        except Exception:
+            img_pil = Image.new('RGB', (Config.IMG_SIZE[1], Config.IMG_SIZE[0]), color='black')
+        img = self.transform(img_pil) if self.transform else img_pil
+        # Spawn in the center (normalized)
+        start_xy = torch.tensor([0.5, 0.5], dtype=torch.float32)
+        return img, torch.tensor(int(label), dtype=torch.long), start_xy
+
+
+def train(
+    use_pretrained_decoder=True,
+    load_full_model=False,
+    no_rl=False,
+    wb=None,
+    recon_warmup_epochs: int = 0,
+    no_cls_warmup: bool = False,
+):
     # timestamped run directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_name = f"gaze_control_{Config.DATA_SOURCE}_rl_{timestamp}"
@@ -148,40 +276,25 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
         transforms.Lambda(lambda x: x * 2.0 - 1.0),  # [0,1] → [-1,1]
     ])
 
-    # choose dataset
-    if Config.DATA_SOURCE == "mnist":
-        train_dataset = datasets.MNIST(root=Config.MNIST_DATA_DIR,
-                                       train=True,
-                                       transform=transform_mnist,
-                                       download=True)
-    elif Config.DATA_SOURCE == "cifar100":
-        train_dataset = datasets.CIFAR100(root=Config.CIFAR100_DATA_DIR,
-                                         train=True,
-                                         transform=transform_img,
-                                         download=True)
+    # Choose dataset per config
+    data_src = getattr(Config, 'DATA_SOURCE', 'maze').lower()
+    if data_src == 'snakes':
+        snakes_root = getattr(Config, 'SNAKES_ROOT', './Data/Snakes128_tight')
+        if not os.path.exists(snakes_root):
+            raise FileNotFoundError(f"Snakes dataset not found at {snakes_root}. Generate with Datasets/Pathfinder/generate_snakes2_tight128.py")
+        val_frac = float(getattr(Config, 'SNAKES_VAL_FRAC', 0.1))
+        train_dataset = SnakesDataset(snakes_root, split='train', transform=transform_img, val_frac=val_frac)
+        val_dataset = SnakesDataset(snakes_root, split='val', transform=transform_img, val_frac=val_frac)
     else:
-        # Handle multiple local data directories
-        local_dirs = Config.get_local_data_dirs()
-        local_datasets = []
-        for data_dir in local_dirs:
-            if os.path.exists(data_dir):
-                dataset = SimpleImageDataset(data_dir, transform=transform_img)
-                local_datasets.append(dataset)
-                print(f"Added dataset from {data_dir} with {len(dataset)} images")
-            else:
-                print(f"Warning: Directory {data_dir} does not exist, skipping...")
-        
-        if not local_datasets:
-            raise ValueError("No valid local data directories found!")
-        
-        # Combine all local datasets
-        train_dataset = ConcatDataset(local_datasets) if len(local_datasets) > 1 else local_datasets[0]
-        print(f"Total combined dataset size: {len(train_dataset)} images")
+        # Maze dataset and its JSON metadata
+        maze_root = getattr(Config, 'MAZE_ROOT', os.path.join('./Data', 'Maze'))
+        if not os.path.exists(os.path.join(maze_root, 'imgs', 'train')):
+            raise FileNotFoundError(f"Maze dataset not found at {maze_root}. Set Config.MAZE_ROOT to your dataset root or generate it with Datasets/generate_maze.py")
+        train_dataset = MazeDataset(maze_root, split='train', transform=transform_img)
+        val_dataset = MazeDataset(maze_root, split='val', transform=transform_img)
 
-    train_loader = DataLoader(train_dataset,
-                              batch_size=Config.BATCH_SIZE,
-                              shuffle=True,
-                              num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, shuffle=False, num_workers=0)
 
     # Initialize model, loss and optimizer
     model = GazeControlModel(encoder_output_size=Config.ENCODER_OUTPUT_SIZE,
@@ -246,7 +359,17 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
     # No Gaussian std for discrete policy
 
     # Build separate optimizers for policy/value heads and backbone
-    agent = Agent(state_size=Config.HIDDEN_SIZE, pos_encoding_dim=Config.POS_ENCODING_DIM).to(Config.DEVICE)
+    agent = Agent(state_size=Config.HIDDEN_SIZE, pos_encoding_dim=Config.POS_ENCODING_DIM,
+                  stop_init_bias=float(getattr(Config, 'RL_STOP_INIT_BIAS', -8.0))).to(Config.DEVICE)
+    # If a checkpoint was requested via --load-full and it contains an agent_state_dict, load it now
+    if load_full_model and ckpt_path and os.path.exists(ckpt_path):
+        try:
+            raw2 = torch.load(ckpt_path, map_location=Config.DEVICE)
+            if isinstance(raw2, dict) and 'agent_state_dict' in raw2:
+                agent.load_state_dict(raw2['agent_state_dict'], strict=False)
+                print("Loaded agent_state_dict from checkpoint")
+        except Exception as e:
+            print(f"Warning: failed to load agent_state_dict ({e})")
     policy_params = list(agent.parameters())
     backbone_params = list(model.parameters())
     
@@ -279,11 +402,11 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
     print(f"GRAND TOTAL:{total_model_params + agent_params:>12,} params ({(total_model_params + agent_params)/1e6:.2f}M)")
     print("="*60 + "\n")
 
+    # Lazily create policy optimizer when RL becomes enabled
     opt_policy = None
-    if not no_rl:
-        opt_policy = torch.optim.AdamW(policy_params, lr=getattr(Config, 'RL_POLICY_LR', Config.LEARNING_RATE), weight_decay=Config.WEIGHT_DECAY)
-    else:
-        # Freeze policy/value heads when RL is disabled
+    global_rl_disabled = bool(no_rl)
+    if global_rl_disabled:
+        # Freeze policy/value heads when RL globally disabled
         for p in policy_params:
             p.requires_grad = False
     opt_backbone = torch.optim.AdamW(backbone_params, lr=getattr(Config, 'RL_BACKBONE_LR', Config.LEARNING_RATE), weight_decay=Config.WEIGHT_DECAY)  # RL backbone lr not in config rn
@@ -297,6 +420,9 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
     # MS-SSIM loss
     ssim_weight = float(getattr(Config, 'SSIM_WEIGHT', 0.0))
     use_ssim = ssim_weight > 0.0
+    # Gradient Difference Loss (GDL) for sharp edges
+    gdl_weight = float(getattr(Config, 'GDL_WEIGHT', 0.0))
+    criterion_gdl = GradientDifferenceLoss().to(Config.DEVICE) if gdl_weight > 0.0 else None
     # Foreground mask for L1 loss
     use_fg_mask = bool(getattr(Config, 'USE_FG_MASK', False))
     fg_thresh = float(getattr(Config, 'FG_THRESH', 0.1))
@@ -304,45 +430,85 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
 
     # RL is always fully attached; no detach/ramp schedule
 
-    # Optionally freeze backbone for initial RL-only epochs
-    rl_only_epochs = int(getattr(Config, 'RL_ONLY_EPOCHS', 0))
-    if no_rl:
-        rl_only_epochs = 0  # don't freeze backbone when RL is disabled
-    if rl_only_epochs > 0 and not no_rl:
-        print(f"RL-first enabled: freezing backbone for first {rl_only_epochs} epoch(s)")
-        for p in model.parameters():
-            p.requires_grad = False
+    # Schedule for freezing backbone during initial RL-only epochs, relative to RL start
+    rl_only_epochs = int(getattr(Config, 'RL_ONLY_EPOCHS', 0)) if not global_rl_disabled else 0
+    rl_start_epoch = 0 if global_rl_disabled else int(recon_warmup_epochs)
+    backbone_frozen = False
     model.train()
     global_step = 0
     episodes_seen = 0
     for epoch in range(Config.EPOCHS):
-        # Transition out of RL-only phase: unfreeze backbone at epoch boundary
-        if (not no_rl) and rl_only_epochs > 0 and epoch == rl_only_epochs:
-                print(f"Unfreezing backbone after RL-only phase at epoch {epoch}")
+        # Make sure we're in training mode at the start of each epoch
+        model.train()
+        agent.train()
+        # Phase gating
+        warmup_active = (epoch < recon_warmup_epochs)
+        rl_enabled = (not global_rl_disabled) and (not warmup_active)
+        cls_enabled = not (bool(no_cls_warmup) and warmup_active)
+
+        # Manage RL optimizer lazily
+        if rl_enabled and opt_policy is None:
+            opt_policy = torch.optim.AdamW(
+                policy_params,
+                lr=getattr(Config, 'RL_POLICY_LR', Config.LEARNING_RATE),
+                weight_decay=Config.WEIGHT_DECAY,
+            )
+            # Ensure agent params are trainable
+            for p in agent.parameters():
+                p.requires_grad = True
+
+        # Backbone freeze schedule: freeze during [rl_start_epoch, rl_start_epoch + rl_only_epochs)
+        if rl_only_epochs > 0 and rl_start_epoch <= epoch < rl_start_epoch + rl_only_epochs:
+            if not backbone_frozen:
+                print(f"[epoch {epoch}] RL-only phase: freezing backbone")
+                for p in model.parameters():
+                    p.requires_grad = False
+                backbone_frozen = True
+        else:
+            if backbone_frozen:
+                print(f"[epoch {epoch}] Unfreezing backbone after RL-only phase")
                 for p in model.parameters():
                     p.requires_grad = True
-                # If decoder freeze policy is configured, re-freeze decoder for remaining initial epochs
-                if hasattr(Config, 'FREEZE_DECODER_EPOCHS') and Config.FREEZE_DECODER_EPOCHS > 0:
-                    print(f"Applying decoder freeze for {Config.FREEZE_DECODER_EPOCHS} epoch(s) after RL-only phase")
-                    for param in model.decoder.parameters():
-                        param.requires_grad = False
+                backbone_frozen = False
 
-        # Unfreeze decoder after FREEZE_DECODER_EPOCHS (counts from when decoder was frozen)
+        # Unfreeze decoder after FREEZE_DECODER_EPOCHS from start of training
         if (hasattr(Config, 'FREEZE_DECODER_EPOCHS') and 
             Config.FREEZE_DECODER_EPOCHS > 0 and 
-            epoch == rl_only_epochs + Config.FREEZE_DECODER_EPOCHS):
+            epoch == Config.FREEZE_DECODER_EPOCHS):
             print(f"Unfreezing decoder at epoch {epoch}")
             for param in model.decoder.parameters():
                 param.requires_grad = True
                 
-        for batch_idx, (images, _) in enumerate(train_loader):
+        for batch_idx, batch in enumerate(train_loader):
+            # Support datasets that return (image, label, start_xy)
+            if isinstance(batch, (list, tuple)) and len(batch) >= 3:
+                images, labels, starts_xy = batch
+            else:
+                images, labels = batch
+                starts_xy = None
             total_rec_loss = torch.tensor(0.0, device=Config.DEVICE)
             image = images.to(Config.DEVICE)
+            labels = labels.to(Config.DEVICE)
             
-            # Start with random initial gaze position
+            # Start gaze position
             num_steps = Config.MAX_STEPS
             B = image.size(0)
-            gaze = torch.rand(B, 2, device=Config.DEVICE) * 0.4 + 0.3  # Start in central 40% area
+            if starts_xy is not None:
+                base = starts_xy.to(Config.DEVICE)
+                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+                if jitter_r > 0.0:
+                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
+                    base = base + jitter
+                gaze = base.clamp(0.0, 1.0)
+            elif hasattr(Config, 'START_GAZE') and getattr(Config, 'START_GAZE') is not None:
+                base = torch.tensor(list(getattr(Config, 'START_GAZE')), device=Config.DEVICE).view(1, 2).repeat(B, 1)
+                jitter_r = float(getattr(Config, 'START_JITTER', 0.0) or 0.0)
+                if jitter_r > 0.0:
+                    jitter = (torch.rand(B, 2, device=Config.DEVICE) * 2.0 - 1.0) * jitter_r
+                    base = base + jitter
+                gaze = base.clamp(0.0, 1.0)
+            else:
+                gaze = torch.rand(B, 2, device=Config.DEVICE) * 0.4 + 0.3  # central 40%
 
             # Initialize LSTM memory
             state = model.init_memory(B, Config.DEVICE)
@@ -353,18 +519,29 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
             # No coupling schedule to log anymore
 
             # RL rollouts storage
-            logprobs = []
-            values = []
-            entropies = []
-            rewards = []
-            prev_full_err = None
+            logprobs = []   # list of (B,)
+            values = []     # list of (B,)
+            entropies = []  # list of (B,)
             # record gaze positions per step (pre-action)
             gaze_path = []
+            # Early stopping per-sample
+            alive_mask = torch.ones(B, dtype=torch.bool, device=Config.DEVICE)
+            last_step = torch.full((B,), -1, dtype=torch.long, device=Config.DEVICE)
+            final_decision_logits = torch.zeros(B, 2, device=Config.DEVICE)
+
+            # Prepare cumulative visibility mask for step-wise losses
+            use_step_mask = bool(getattr(Config, "USE_MASKED_STEP_LOSS", False))
+            if use_step_mask:
+                H, W = Config.IMG_SIZE
+                sum_mask = torch.zeros((B, 1, H, W), device=Config.DEVICE)
+                sigma_base = Config.FOVEA_OUTPUT_SIZE[0] / max(H, W)
+                sigma_step = sigma_base * float(getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35))
 
             # Accumulate per-step losses (optionally masked/local)
             for step in range(num_steps):
                 # record current gaze before taking action
-                gaze_path.append(gaze[0].detach().cpu())
+                # Keep full batch gaze history on device for final visibility mask
+                gaze_path.append(gaze.detach().clone())
                 # Multi-scale glimpse: k scales with sizes base*(2**i), all resized to FOVEA_OUTPUT_SIZE
                 k_scales = int(getattr(Config, 'K_SCALES', 3))
                 base_h, base_w = Config.FOVEA_CROP_SIZE
@@ -375,14 +552,12 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     patches.append(crop_patch(image, gaze, size, resize_to=Config.FOVEA_OUTPUT_SIZE))
                 reconstruction, state = model(patches, state, gaze)
 
-                if getattr(Config, "USE_MASKED_STEP_LOSS", False):
-                    # Soft local mask around gaze; compute losses only where observed
-                    H, W = Config.IMG_SIZE
-                    sigma_base = Config.FOVEA_OUTPUT_SIZE[0] / max(H, W)
-                    sigma_frac = sigma_base * float(getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35))
-                    mask = _make_gaussian_mask(H, W, gaze, sigma_frac=sigma_frac, device=Config.DEVICE)  # (B,1,H,W)
-                    # Broadcast to channels and compute per-sample masked loss, then mean over batch
-                    mask3 = mask.expand(-1, 3, H, W)
+                if use_step_mask:
+                    # Build current-step mask and merge into cumulative visibility
+                    step_mask = _make_gaussian_mask(H, W, gaze, sigma_frac=sigma_step, device=Config.DEVICE)  # (B,1,H,W)
+                    sum_mask = torch.maximum(sum_mask, step_mask)
+                    # Compute masked per-sample L1 over union mask
+                    mask3 = sum_mask.expand(-1, 3, H, W)
                     per_sample_l1 = (((reconstruction - image).abs() * mask3).flatten(1).sum(dim=1) /
                                      (mask3.flatten(1).sum(dim=1) + 1e-6))
                     l1_m = per_sample_l1.mean()
@@ -395,28 +570,12 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                 max_w = getattr(Config, "STEP_LOSS_MAX", 0.2)
                 weight = min_w + (max_w - min_w) * step_frac
 
-                # Compute L1 loss with optional foreground masking
-                if use_fg_mask:
-                    # Convert from [-1,1] to [0,1] for luminance computation
-                    img_01 = (image + 1.0) / 2.0
-                    recon_01 = (reconstruction + 1.0) / 2.0
-                    # Compute luminance for foreground detection
-                    img_y = 0.2989 * img_01[:,0:1] + 0.5870 * img_01[:,1:2] + 0.1140 * img_01[:,2:3]
-                    recon_y = 0.2989 * recon_01[:,0:1] + 0.5870 * recon_01[:,1:2] + 0.1140 * recon_01[:,2:3]
-                    # Create weight mask: foreground=1.0, background=bg_weight
-                    w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
-                    # Apply weight to L1 error (in [0,1] space)
-                    l1_step = (w * (recon_y - img_y).abs()).mean() * weight + l1_m
+                # Compute L1 loss alive subset (masked-only when enabled)
+                alive_idx = torch.nonzero(alive_mask, as_tuple=False).squeeze(-1)
+                if use_step_mask:
+                    l1_step = l1_m
                 else:
-                    l1_step = l1_loss(reconstruction, image) * weight + l1_m
-                
-                # ANTI-COLLAPSE: Add variance penalty at each step
-                step_var_penalty = 0.0
-                if getattr(Config, "USE_VARIANCE_PENALTY", False):
-                    recon_var = reconstruction.var(dim=[2, 3]).mean()
-                    var_penalty = torch.exp(-recon_var * 10.0)
-                    step_var_penalty = var_penalty.item()
-                    l1_step = l1_step + getattr(Config, "VARIANCE_PENALTY_WEIGHT", 0.1) * var_penalty * weight
+                    l1_step = l1_loss(reconstruction[alive_idx], image[alive_idx]) * weight
 
                 # Compute MS-SSIM loss for this step if enabled
                 if use_ssim:
@@ -425,38 +584,69 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                 else:
                     ssim_step = 0.0
 
-                rec_error = l1_weight * l1_step + (ssim_weight * ssim_step if use_ssim else 0.0)
+                # Optional GDL per-step on alive subset
+                if criterion_gdl is not None:
+                    gdl_step = criterion_gdl(reconstruction[alive_idx], image[alive_idx]) * weight
+                else:
+                    gdl_step = 0.0
+
+                #only use masked loss
+                gdl_step = 0.0
+
+                rec_error = (
+                    l1_weight * l1_step
+                    + (ssim_weight * ssim_step if use_ssim else 0.0)
+                    + (gdl_weight * gdl_step if criterion_gdl is not None else 0.0)
+                )
 
                 total_rec_loss = total_rec_loss + rec_error
 
-                # ----- RL: compute reward per-sample from improvement in FULL reconstruction loss -----
-                with torch.no_grad():
-                    # Per-sample full L1 loss to match per-sample actions/values
-                    full_l1_per = F.l1_loss(reconstruction, image, reduction='none').mean(dim=(1,2,3))    # (B,)
-                    curr_full_err = l1_weight * full_l1_per     # (B,)
-                    if prev_full_err is None:
-                        # first step: set baseline only
-                        prev_full_err = curr_full_err.detach()
-                    else:
-                        r_t = (prev_full_err - curr_full_err)  # (B,)
-                        rewards.append(r_t)
-                        prev_full_err = curr_full_err.detach()
-
-                # Choose action: RL policy or uniform random over 8 directions
-                if not no_rl:
-                    # Policy/value from current hidden state with gaze context (top layer)
+                # Choose action: RL policy (move + stop) or uniform random over 8 directions
+                if rl_enabled:
                     h_t = state[0][-1]  # (B,H)
-                    # Always fully attached now
-                    logits, v_t = agent.policy_value(h_t, gaze)  # logits (B,8), value (B,)
-                    cat = Categorical(logits=logits)
-                    action_idx = cat.sample()               # (B,)
-                    logprob = cat.log_prob(action_idx)      # (B,)
-                    entropy = cat.entropy()                 # (B,)
+                    move_logits, decision_logits_step, stop_logit, value_t = agent.full_policy(h_t, gaze)
+                    cat = Categorical(logits=move_logits)
+                    move_idx = cat.sample()               # (B,)
+                    move_lp = cat.log_prob(move_idx)      # (B,)
+                    move_ent = cat.entropy()              # (B,)
+                    # Bernoulli stop
+                    stop_prob = torch.sigmoid(stop_logit)
+                    stop_dist = torch.distributions.Bernoulli(probs=stop_prob)
+                    stop_sample = stop_dist.sample()       # (B,)
+                    # Enforce a minimum number of moves before allowing stop
+                    min_steps = int(getattr(Config, 'MIN_STEPS_BEFORE_STOP', 10))
+                    if step < min(min_steps, num_steps) - 1:
+                        stop_sample = torch.zeros_like(stop_sample)
+                    # Confidence gating: only allow STOP if classifier confidence >= threshold
+                    conf_thresh = float(getattr(Config, 'STOP_CONF_THRESH', 0.9))
+                    if conf_thresh is not None and conf_thresh > 0.0:
+                        with torch.no_grad():
+                            conf = torch.softmax(decision_logits_step, dim=1).amax(dim=1)
+                        stop_sample = torch.where(conf >= conf_thresh, stop_sample, torch.zeros_like(stop_sample))
+                    stop_lp = stop_dist.log_prob(stop_sample)  # (B,)
+                    # Compose joint logprob and entropy (approximate add)
+                    logprob = move_lp + stop_lp
+                    entropy = move_ent + (-(stop_prob * torch.log(stop_prob.clamp_min(1e-8)) + (1 - stop_prob) * torch.log((1 - stop_prob).clamp_min(1e-8))))
+                    logprobs.append(logprob)
+                    values.append(value_t)
+                    entropies.append(entropy)
+                    # final decision logits update for samples that stopped this step
+                    newly_stopped = (stop_sample >= 0.5) & alive_mask
+                    if newly_stopped.any():
+                        final_decision_logits[newly_stopped] = decision_logits_step[newly_stopped]
+                        last_step[newly_stopped] = step
                 else:
-                    action_idx = torch.randint(low=0, high=8, size=(gaze.shape[0],), device=Config.DEVICE)
-                # Map discrete action index to delta
+                    # Dont stop when using random policy
+                    move_idx = torch.randint(low=0, high=8, size=(gaze.shape[0],), device=Config.DEVICE)
+                    stop_sample = torch.zeros(gaze.shape[0], device=Config.DEVICE)
+
+                # Continuation mask for next step
+                cont_mask = alive_mask & (stop_sample < 0.5)
+
+                # Map discrete action index to delta and apply only for samples that continue
                 deltas = eight_dir_deltas(Config.MAX_MOVE, device=Config.DEVICE)
-                delta = deltas[action_idx]
+                delta = deltas[move_idx]
+                delta = delta * cont_mask.float().unsqueeze(1)
 
                 # Apply action for next step
                 gaze = torch.clamp(gaze + delta, 0.0, 1.0)
@@ -466,24 +656,65 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     lo, hi = frac, 1.0 - frac
                     gaze = gaze.clamp(min=lo, max=hi)
 
-                if step > 0 and not no_rl:
-                    # again skip first step since no action was taken yet
-                    logprobs.append(logprob)
-                    values.append(v_t)
-                    entropies.append(entropy)
+                # Update alive mask and exit if all stopped
+                alive_mask = cont_mask
+                if alive_mask.sum() == 0:
+                    break
 
             # Final reconstruction from final LSTM state with larger weight
             final_recon = model.decode_from_state(state)
             
-            # Compute L1 loss with optional foreground masking
-            if use_fg_mask:
-                # Convert from [-1,1] to [0,1] for luminance computation
-                img_01 = (image + 1.0) / 2.0
-                final_01 = (final_recon + 1.0) / 2.0
-                img_y = 0.2989 * img_01[:,0:1] + 0.5870 * img_01[:,1:2] + 0.1140 * img_01[:,2:3]
-                final_y = 0.2989 * final_01[:,0:1] + 0.5870 * final_01[:,1:2] + 0.1140 * final_01[:,2:3]
-                w = torch.where(img_y >= fg_thresh, torch.ones_like(img_y), torch.full_like(img_y, bg_weight))
-                final_l1 = (w * (final_y - img_y).abs()).mean()
+            # Optional: restrict final reconstruction loss to what the agent actually observed
+            use_final_mask = bool(getattr(Config, "USE_FINAL_VISIBILITY_MASK", False)) and len(gaze_path) > 0
+            final_l1 = None
+            masked_final_gdl = None
+            if use_final_mask:
+                H, W = Config.IMG_SIZE
+                # Base sigma as fraction of image based on fovea size
+                sigma_base = Config.FOVEA_OUTPUT_SIZE[0] ** float(getattr(Config, "K_SCALES", 3)) / max(H, W)
+                sigma_frac_final = sigma_base * float(getattr(Config, "FINAL_MASK_SIGMA_SCALE", getattr(Config, "STEP_MASK_SIGMA_SCALE", 0.35)))
+                # Build per-step masks and union across actually executed steps per sample
+                T_obs = len(gaze_path)
+                masks_t = []
+                for t in range(T_obs):
+                    masks_t.append(_make_gaussian_mask(H, W, gaze_path[t], sigma_frac=sigma_frac_final, device=Config.DEVICE))  # (B,1,H,W)
+                masks_stack = torch.stack(masks_t, dim=0)  # (T,B,1,H,W)
+
+                # Determine executed steps per-sample; include all steps if never stopped
+                ls = last_step.clone()
+                ls[ls < 0] = T_obs - 1
+                t_idx = torch.arange(T_obs, device=Config.DEVICE).unsqueeze(1)  # (T,1)
+                exec_masks_tb = (t_idx <= ls.unsqueeze(0)).to(masks_stack.dtype)  # (T,B)
+                exec_masks_tb = exec_masks_tb.view(T_obs, -1, 1, 1, 1)
+                masks_stack = masks_stack * exec_masks_tb
+                # Union over time
+                final_mask = torch.amax(masks_stack, dim=0)  # (B,1,H,W)
+                # Expand to channels
+                final_mask3 = final_mask.expand(-1, 3, H, W)
+
+                # Masked per-sample L1 averaged over visible area only
+                per_sample_l1 = (((final_recon - image).abs() * final_mask3).flatten(1).sum(dim=1) /
+                                   (final_mask3.flatten(1).sum(dim=1) + 1e-6))
+                final_l1 = per_sample_l1.mean()
+
+                # If using GDL, use manual gdl inside mask
+                if criterion_gdl is not None:
+                    # Horizontal gradients: width-1
+                    pred_dx = torch.abs(final_recon[:, :, :, 1:] - final_recon[:, :, :, :-1])
+                    targ_dx = torch.abs(image[:, :, :, 1:] - image[:, :, :, :-1])
+                    mask_dx = final_mask3[:, :, :, 1:] * final_mask3[:, :, :, :-1]
+                    dx_diff = torch.abs(pred_dx - targ_dx) * mask_dx
+                    dx_sum = mask_dx.flatten(1).sum(dim=1).clamp_min(1.0)  # avoid div by zero
+                    dx_loss = (dx_diff.flatten(1).sum(dim=1) / dx_sum).mean()
+
+                    # Vertical gradients: height-1
+                    pred_dy = torch.abs(final_recon[:, :, 1:, :] - final_recon[:, :, :-1, :])
+                    targ_dy = torch.abs(image[:, :, 1:, :] - image[:, :, :-1, :])
+                    mask_dy = final_mask3[:, :, 1:, :] * final_mask3[:, :, :-1, :]
+                    dy_diff = torch.abs(pred_dy - targ_dy) * mask_dy
+                    dy_sum = mask_dy.flatten(1).sum(dim=1).clamp_min(1.0)
+                    dy_loss = (dy_diff.flatten(1).sum(dim=1) / dy_sum).mean()
+                    masked_final_gdl = dx_loss + dy_loss
             else:
                 final_l1 = l1_loss(final_recon, image)
             
@@ -521,91 +752,145 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                 mssim_val = ms_ssim(final_recon, image, data_range=2.0, size_average=True)
                 final_ssim = 1.0 - mssim_val
             
+            # Optional GDL on final reconstruction
+            final_gdl = None
+            if criterion_gdl is not None:
+                if use_final_mask and masked_final_gdl is not None:
+                    final_gdl = masked_final_gdl
+                else:
+                    final_gdl = criterion_gdl(final_recon, image)
+            
             final_mult = getattr(Config, "FINAL_LOSS_MULT", 8.0)
             final_loss = l1_weight * final_l1 * final_mult
             if final_perc is not None and perc_weight > 0.0:
                 final_loss = final_loss + perc_weight * final_perc * final_mult
             if final_ssim is not None and ssim_weight > 0.0:
                 final_loss = final_loss + ssim_weight * final_ssim * final_mult
+            if final_gdl is not None and gdl_weight > 0.0:
+                final_loss = final_loss + gdl_weight * final_gdl * final_mult
+            # Compute final decision logits for those never stopped
+            T_exec = len(values)
+            not_stopped = (last_step < 0)
+            if not_stopped.any():
+                h_T = state[0][-1]
+                _mT, decision_logits_T, _sT, _vT = agent.full_policy(h_T, gaze)
+                final_decision_logits[not_stopped] = decision_logits_T[not_stopped]
+                last_step[not_stopped] = int(getattr(Config, 'MAX_STEPS', 20)) - 1
+            # Classification loss on final decisions
+            ce_cls = nn.CrossEntropyLoss()
+            cls_loss = ce_cls(final_decision_logits, labels)
 
-            total_loss = total_rec_loss + final_loss
+            total_loss = total_rec_loss + final_loss + (cls_loss if cls_enabled else 0.0)
 
             # ----- RL loss (A2C with GAE) -----
             rl_loss = torch.tensor(0.0, device=Config.DEVICE)
-            if (not no_rl) and len(rewards) > 0:
+            if rl_enabled and len(values) > 0:
                 gamma = float(getattr(Config, 'RL_GAMMA', 0.95))
                 lam = float(getattr(Config, 'RL_LAMBDA', 0.95))
-                rewards_t_raw = torch.stack(rewards)  # (T,B)
                 scale = float(getattr(Config, 'RL_REWARD_SCALE', 1.0))
-                rewards_t = rewards_t_raw * scale  # (T, B=1)
-                logprobs_t = torch.stack(logprobs)  # (T, B)
-                values_t = torch.stack(values)      # (T, B)
-                entropies_t = torch.stack(entropies)  # (T, B)
+                preds = final_decision_logits.argmax(dim=1)
+                r_final = (preds == labels).float() * scale  # (B,)
+
+                # Stack per-step tensors with executed length T, then pad to MAX_STEPS for safe indexing/masking
+                values_t_exec = torch.stack(values)      # (T,B)
+                logprobs_t_exec = torch.stack(logprobs)  # (T,B)
+                entropies_t_exec = torch.stack(entropies)  # (T,B)
+                T_exec = values_t_exec.size(0)
+                max_Steps = int(getattr(Config, 'MAX_STEPS', 20))
+
+                def pad_to_max(t_TB):
+                    if t_TB.size(0) == max_Steps:
+                        return t_TB
+                    pad_len = max_Steps - t_TB.size(0)
+                    pad = torch.zeros((pad_len, *t_TB.shape[1:]), device=t_TB.device, dtype=t_TB.dtype)
+                    return torch.cat([t_TB, pad], dim=0)
+
+                values_t = pad_to_max(values_t_exec)          # (max_Steps,B)
+                logprobs_t = pad_to_max(logprobs_t_exec)      # (max_Steps,B)
+                entropies_t = pad_to_max(entropies_t_exec)    # (max_Steps,B)
+
+                rewards_t = torch.zeros((max_Steps, labels.size(0)), device=Config.DEVICE)
+                # Per-step time penalty to encourage shorter trajectories
+                # Also additionally penalize taking less steps when final classification is wrong
+                step_pen = float(getattr(Config, 'RL_STEP_PENALTY', 0.0))
+                ls = last_step.clone()
+                ls[ls < 0] = max_Steps - 1
+                t_idx = torch.arange(max_Steps, device=Config.DEVICE).unsqueeze(1)  # (T,1)
+                exec_masks_t = (t_idx <= ls.unsqueeze(0)).to(values_t.dtype)  # (max_Steps,B)
+                cont_masks_t = (t_idx < ls.unsqueeze(0)).to(values_t.dtype)   # (max_Steps,B)
+                # Per-step time penalty on each executed step
+                if step_pen != 0.0:
+                    rewards_t = rewards_t - step_pen * exec_masks_t
+                # Add final reward at the last executed step for each sample
+                batch_arange = torch.arange(labels.size(0), device=Config.DEVICE)
+                ls_clamped = ls.clamp_min(0).clamp_max(max_Steps - 1)
+                # Additional penalty for not executing all steps if final decision is wrong
+                # This is scaled super high to strongly encourage running to full length when unsure
+                incorrect = (preds != labels).float()
+                stop_penalty = step_pen * incorrect * (max_Steps - 1 - ls_clamped).float()  * 200
+                rewards_t[ls_clamped, batch_arange] = rewards_t[ls_clamped, batch_arange] + r_final - stop_penalty
 
                 with torch.no_grad():
-                    # bootstrap with critic using final hidden state and current gaze
-                    h_T = state[0][-1]
-                    next_value = agent.policy_value(h_T, gaze)[1]  # (B,)
-                    T = rewards_t.size(0)
                     advantages = torch.zeros_like(values_t)
-                    gae = torch.zeros_like(next_value)
-                    for t in reversed(range(T)):
+                    gae = torch.zeros_like(values_t[-1])
+                    next_value = torch.zeros_like(values_t[-1])
+                    for t in reversed(range(max_Steps)):
                         v_t = values_t[t]
-                        v_tp1 = next_value if t == T - 1 else values_t[t + 1]
-                        delta = rewards_t[t] + gamma * v_tp1 - v_t
-                        gae = delta + gamma * lam * gae
+                        v_tp1 = next_value
+                        m_t = cont_masks_t[t]
+                        delta = rewards_t[t] + gamma * v_tp1 * m_t - v_t
+                        gae = delta + gamma * lam * m_t * gae
                         advantages[t] = gae
+                        next_value = v_t
                     returns = advantages + values_t
 
-                # Optionally normalize advantages
                 if bool(getattr(Config, 'RL_NORM_ADV', False)):
-                    adv_mean = advantages.mean()
-                    adv_std = advantages.std().clamp_min(1e-6)
+                    mask_sum = exec_masks_t.sum().clamp_min(1.0)
+                    adv_mean = (advantages * exec_masks_t).sum() / mask_sum
+                    adv_var = (((advantages - adv_mean) ** 2) * exec_masks_t).sum() / mask_sum
+                    adv_std = adv_var.sqrt().clamp_min(1e-6)
                     advantages = (advantages - adv_mean) / adv_std
 
-                policy_loss = -(logprobs_t * advantages.detach()).mean()
-                value_loss = F.mse_loss(values_t, returns)
-                entropy_loss = -entropies_t.mean()
-
+                denom = exec_masks_t.sum().clamp_min(1.0)
+                policy_loss = -((logprobs_t * advantages.detach()) * exec_masks_t).sum() / denom
+                value_loss = (((values_t - returns) ** 2) * exec_masks_t).sum() / denom
+                entropy_loss = -(entropies_t * exec_masks_t).sum() / denom
                 value_coef = float(getattr(Config, 'RL_VALUE_COEF', 0.5))
                 entropy_coef = float(getattr(Config, 'RL_ENTROPY_COEF', 0.01))
                 rl_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
 
-                # Log RL metrics via W&B
-                if wb is not None:
-                    wandb.log({
-                        "RL/policy_loss": float(policy_loss.item()),
-                        "RL/value_loss": float(value_loss.item()),
-                        "RL/entropy": float((-entropy_loss).item()),
-                        "RL/mean_reward_raw": float(rewards_t_raw.mean().item()),
-                        "RL/mean_reward_scaled": float(rewards_t.mean().item()),
-                        "RL/mean_advantage": float(advantages.mean().item()),
-                    }, step=global_step)
-
             total_loss = total_loss + float(getattr(Config, 'RL_LOSS_WEIGHT', 1.0)) * rl_loss
 
             # Backpropagation
-            if opt_policy is not None:
+            if opt_policy is not None and rl_enabled:
                 opt_policy.zero_grad()
-            if epoch >= rl_only_epochs:
+            # Allow stepping backbone except when explicitly frozen
+            if not backbone_frozen:
                 opt_backbone.zero_grad()
             total_loss.backward()
             # Gradient clipping for stability (clip both backbone and agent)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=Config.GRAD_CLIP_NORM)
-            if opt_policy is not None:
+            if opt_policy is not None and rl_enabled:
                 torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=Config.GRAD_CLIP_NORM)
 
             # Step optimizers
-            if opt_policy is not None:
+            if opt_policy is not None and rl_enabled:
                 opt_policy.step()
-            if epoch >= rl_only_epochs:
+            if not backbone_frozen:
                 opt_backbone.step()
 
             # Update counters and maybe checkpoint every 5000 images
             imgs_seen += images.size(0)
             if imgs_seen >= next_save_at:
                 ckpt_path = os.path.join(run_dir, f"model_images_{imgs_seen}.pth")
-                torch.save(model.state_dict(), ckpt_path)
+                # Save agent only when RL is not globally disabled (i.e., not --no-rl)
+                if not global_rl_disabled:
+                    torch.save({
+                        'model_state_dict': model.state_dict(),
+                        'agent_state_dict': agent.state_dict(),
+                    }, ckpt_path)
+                else:
+                    torch.save(model.state_dict(), ckpt_path)
                 print(f"Checkpoint saved at {imgs_seen} images -> {ckpt_path}")
                 next_save_at += 50000
 
@@ -621,13 +906,13 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     logs["loss/perc"] = float(final_perc.item())
                 if final_ssim is not None:
                     logs["loss/ssim"] = float(final_ssim.item())
-                if getattr(Config, "USE_VARIANCE_PENALTY", False):
-                    logs["loss/variance_penalty"] = final_var_penalty
-                    logs["metrics/output_variance"] = final_variance
-                if getattr(Config, "USE_LATENT_NORM_PENALTY", False):
-                    logs["loss/latent_norm_penalty"] = latent_norm_penalty
-                    h_state = state[0] if isinstance(state, tuple) else state
-                    logs["metrics/latent_norm"] = torch.norm(h_state, dim=1).mean().item()
+                if 'final_gdl' in locals() and final_gdl is not None:
+                    logs["loss/gdl_final"] = float(final_gdl.item())
+                # Log classification loss
+                if cls_enabled:
+                    logs["loss/cls"] = float(cls_loss.item())
+                logs["phase/warmup"] = int(warmup_active)
+                logs["phase/rl_enabled"] = int(rl_enabled)
                 wandb.log(logs, step=global_step)
 
             # Occasionally log a synchronized figure: Original+GazePath vs Reconstruction (every 10 batches)
@@ -638,12 +923,22 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     orig_np = ((image[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
                     # Use final_recon instead of intermediate reconstruction
                     recon_np = ((final_recon[0].detach().cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0).clip(0, 1)
+                    # Compute final decision for first sample and confidence
+                    with torch.no_grad():
+                        probs = torch.softmax(final_decision_logits, dim=1)
+                        pred0 = int(probs[0].argmax().item())
+                        conf0 = float(probs[0, pred0].item())
+                        true0 = int(labels[0].item())
                     # Build combined figure
                     fig, axs = plt.subplots(1, 2, figsize=(8, 4))
                     # Left: Original with gaze path
                     axs[0].imshow(orig_np)
                     if len(gaze_path) > 0:
-                        pts = [(int(p[0].item() * (W - 1)), int(p[1].item() * (H - 1))) for p in gaze_path]
+                        # Support both shapes: p is (2,) or (B,2); always visualize sample 0
+                        pts = []
+                        for p in gaze_path:
+                            p0 = p if p.dim() == 1 else p[0]
+                            pts.append((int(p0[0].item() * (W - 1)), int(p0[1].item() * (H - 1))))
                         xs, ys = zip(*pts)
                         axs[0].scatter(xs, ys, c='r', s=40, marker='x', label='gaze')
                         axs[0].plot(xs, ys, c='yellow', linewidth=1, alpha=0.8)
@@ -652,6 +947,10 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
                     # Right: Final step reconstruction
                     axs[1].imshow(recon_np)
                     axs[1].set_title('Reconstruction (final step)')
+                    # Overlay prediction vs truth text box
+                    txt = f"pred={pred0}  p={conf0*100:.1f}%  true={true0}"
+                    axs[1].text(0.02, 0.98, txt, transform=axs[1].transAxes, va='top', ha='left',
+                                color='white', bbox=dict(facecolor='black', alpha=0.6, boxstyle='round,pad=0.3'), fontsize=9)
                     axs[1].axis('off')
                     plt.tight_layout()
                     if wb is not None:
@@ -668,7 +967,14 @@ def train(use_pretrained_decoder=True, load_full_model=False, no_rl=False, wb=No
             episodes_seen += 1
             clear_memory()
         model_path = os.path.join("gaze_control_model_local.pth")
-        torch.save(model.state_dict(), model_path)
+        # Save agent only when RL is not globally disabled (i.e., not --no-rl)
+        if not global_rl_disabled:
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'agent_state_dict': agent.state_dict(),
+            }, model_path)
+        else:
+            torch.save(model.state_dict(), model_path)
         print(f"Epoch {epoch} complete. Model saved to {model_path}")
     # No TensorBoard writer to close
 
@@ -725,6 +1031,10 @@ if __name__ == "__main__":
     parser.add_argument('--wandb-project', type=str, default='GazeControl', help='W&B project name')
     parser.add_argument('--wandb-entity', type=str, default=None, help='W&B entity/team')
     parser.add_argument('--wandb-run-name', type=str, default=None, help='W&B run name')
+    parser.add_argument('--recon-warmup-epochs', type=int, default=0,
+                        help='Number of initial epochs with reconstruction-only (no RL); classification optionally disabled via --no-cls-warmup')
+    parser.add_argument('--no-cls-warmup', action='store_true',
+                        help='Disable classification loss during warmup epochs')
     args = parser.parse_args()
 
     # Dynamically load config module and rebind Config used in this module
@@ -762,7 +1072,14 @@ if __name__ == "__main__":
     if args.no_rl:
         print("RL disabled (--no_rl): using uniform random actions from the discrete space.")
     try:
-        train(use_pretrained_decoder=args.use_pretrained, load_full_model=args.load_full, no_rl=args.no_rl, wb=wb_run)
+        train(
+            use_pretrained_decoder=args.use_pretrained,
+            load_full_model=args.load_full,
+            no_rl=args.no_rl,
+            wb=wb_run,
+            recon_warmup_epochs=int(getattr(args, 'recon_warmup_epochs', 0) or 0),
+            no_cls_warmup=bool(getattr(args, 'no_cls_warmup', False)),
+        )
     finally:
         if wb_run is not None:
             wandb.finish()

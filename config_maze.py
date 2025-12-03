@@ -4,10 +4,10 @@ class Config:
     # Keep fovea/crop tiny for speed; single-scale is fine here
     FOVEA_OUTPUT_SIZE = (4, 4)      # encoder input size per scale
     FOVEA_CROP_SIZE = (4, 4)    # base crop; multi-scale uses 4,8, 16
-    EPOCHS = 80
+    EPOCHS = 200
 
     # Training hyperparameters (small problem)
-    LEARNING_RATE = 3e-4
+    LEARNING_RATE = 5e-5
     WEIGHT_DECAY = 1e-5
     GRAD_CLIP_NORM = 1.0
     BATCH_SIZE = 128
@@ -30,7 +30,7 @@ class Config:
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     # Data: point at Maze dataset images
-    MAZE_ROOT = "./Data/Maze10Random"
+    MAZE_ROOT = "./Data/Maze10Random35"
     LOCAL_DATA_DIR = [MAZE_ROOT]
     MNIST_DATA_DIR = "./Data/mnist"
     CIFAR100_DATA_DIR = "./Data/cifar100"
@@ -38,7 +38,8 @@ class Config:
     # Rollout
     MAX_STEPS = 45
     MAX_MOVE = 0.1  # max gaze move per step (one tile)
-    MIN_STEPS_BEFORE_STOP = 15
+    MIN_STEPS_BEFORE_STOP = 0
+    STOP_CONF_THRESH = 0.9  
     USE_GAZE_BOUNDS = False  # allow exploration to image borders for maze start at top-left
     GAZE_BOUND_FRACTION = 0.05
 
@@ -81,7 +82,7 @@ class Config:
     # RL (defaults; not critical if you train supervised only)
     RL_GAMMA = 0.95
     RL_LAMBDA = 0.95
-    RL_POLICY_LR = 3e-4
+    RL_POLICY_LR = 5e-5
     RL_VALUE_COEF = 0.5
     RL_ENTROPY_COEF = 0.02
     RL_LOSS_WEIGHT = 1.0
@@ -91,7 +92,7 @@ class Config:
     RL_NORM_ADV = True
     RL_STOP_INIT_BIAS = -8.0      # stronger negative initialization for stop action
     # Small per-step time penalty to encourage stopping early when useful
-    RL_STEP_PENALTY = 0.005 #maybe lower it to 0.005 for next training
+    RL_STEP_PENALTY = 0.001 #maybe lower it to 0.005 for next training
 
     RL_ONLY_EPOCHS = 0
 

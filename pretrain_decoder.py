@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--wandb-project", type=str, default="GazeControl", help="W&B project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (team) name")
     parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
+    parser.add_argument("--no-amp", action="store_true", help="Disable AMP for stability if NaNs occur")
     args = parser.parse_args()
 
     # Dynamically load config if requested
@@ -219,6 +220,8 @@ def main():
     l1 = nn.L1Loss(reduction="mean")
 
     use_amp = bool(getattr(Config, "PRETRAIN_USE_AMP", True))
+    if args.no_amp:
+        use_amp = False
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
     # MS-SSIM enable + weight
     _ssim_cli = getattr(args, "ssim_weight", None)
@@ -255,9 +258,9 @@ def main():
                     loss_perc = 0.0
                 # Optional MS-SSIM (structure)
                 if use_ssim:
-                    # Inputs are in [-1,1]; set data_range=2.0; average across batch
-                    mssim_val = ms_ssim(pred, images, data_range=2.0, size_average=True)
-                    loss_ssim = 1.0 - mssim_val
+                    # Compute MS-SSIM in fp32 to avoid AMP underflow/NaNs on sparse images
+                    mssim_val = ms_ssim(pred.float(), images.float(), data_range=2.0, size_average=True)
+                    loss_ssim = (1.0 - mssim_val).to(pred.dtype)
                 else:
                     loss_ssim = 0.0
                 # Optional GDL (Gradient Difference Loss - critical for sparse images)
@@ -285,8 +288,23 @@ def main():
                             (ssim_weight * loss_ssim if use_ssim else 0.0) +
                             (gdl_weight * loss_gdl if use_gdl else 0.0))
                 
+            # NaN/Inf guard
+            if not torch.isfinite(loss):
+                print(f"[pretrain] non-finite loss detected (loss={loss.item()}). Skipping step.")
+                opt.zero_grad(set_to_none=True)
+                scaler.update()
+                continue
+
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
+            # Gradient clipping (stabilize after decoder capacity increase)
+            try:
+                clip_val = float(getattr(Config, 'GRAD_CLIP_NORM', 1.0))
+                if clip_val and clip_val > 0:
+                    scaler.unscale_(opt)
+                    torch.nn.utils.clip_grad_norm_(autoenc.parameters(), max_norm=clip_val)
+            except Exception:
+                pass
             scaler.step(opt)
             scaler.update()
             sched.step()
