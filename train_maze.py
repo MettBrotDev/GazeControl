@@ -500,7 +500,8 @@ def train(
                         mask3 = sum_mask[alive_idx].expand(-1, 3, H, W)
                         per_sample_l1 = (((reconstruction[alive_idx] - image[alive_idx]).abs() * mask3).flatten(1).sum(dim=1) /
                                          (mask3.flatten(1).sum(dim=1) + 1e-6))
-                        l1_m = per_sample_l1.mean()
+                        weight_m = getattr(Config, "STEP_MASK_LOSS_WEIGHT", 1.0)
+                        l1_m = per_sample_l1.mean() * weight_m
                 else:
                     l1_m = 0
                 

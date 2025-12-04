@@ -13,7 +13,7 @@ class Config:
     BATCH_SIZE = 128
 
     # Model dims (lightweight)
-    HIDDEN_SIZE = 256
+    HIDDEN_SIZE = 128
     ENCODER_C1 = 12
     ENCODER_C2 = 16
     ENCODER_OUTPUT_SIZE = ENCODER_C2 * 4  # 2x2 pooled features
@@ -28,7 +28,7 @@ class Config:
     # Decoder
     DECODER_LATENT_CH = 24
     DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
-    USE_DECODER = False
+    USE_DECODER = True
 
     # Data: point at Maze dataset images
     MAZE_ROOT = "./Data/Maze10Random"
@@ -53,7 +53,8 @@ class Config:
     USE_MASKED_STEP_LOSS = True
     STEP_LOSS_MIN = 0.05
     STEP_LOSS_MAX = 0.5
-    FINAL_LOSS_MULT = 8.0
+    STEP_MASK_LOSS_WEIGHT = 0.3
+    FINAL_LOSS_MULT = 2.0
     STEP_MASK_SIGMA_SCALE = 0.5
     # restrict final loss to regions the agent actually observed
     USE_FINAL_VISIBILITY_MASK = True
@@ -65,7 +66,7 @@ class Config:
     PRETRAIN_LR = 3e-3
     PRETRAIN_BATCH_SIZE = 128
     FREEZE_DECODER_EPOCHS = 1
-    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_maze.pth"
+    PRETRAINED_DECODER_PATH = "pretrained_components/pretrained_decoder_maze_128.pth"
     PRETRAIN_L1_WEIGHT = 1.0
     PRETRAIN_MSE_WEIGHT = 0.0
     PRETRAIN_USE_AMP = True
