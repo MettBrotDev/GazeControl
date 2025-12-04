@@ -413,6 +413,11 @@ def validate(
         f"- true positive rate: {tp_rate:.4f} ({tp}/{pos_total})\n"
         f"- true negative rate: {tn_rate:.4f} ({tn}/{neg_total})"
     )
+    total_elapsed = time.perf_counter() - start_ts
+    print(
+        f"Validation complete: split={split}, accuracy={acc:.2f}% "
+        f"({correct}/{total}) in {fmt_secs(total_elapsed)}"
+    )
 
     return acc
 
